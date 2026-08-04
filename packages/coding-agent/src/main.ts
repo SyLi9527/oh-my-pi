@@ -98,9 +98,10 @@ type RunAcpMode = (createSession: AcpSessionFactory) => Promise<never>;
 type RunPrintMode = (session: AgentSession, options: PrintModeOptions) => Promise<void>;
 type RunRpcMode = (
 	session: AgentSession,
-	setToolUIContext?: (uiContext: ExtensionUIContext, hasUI: boolean) => void,
-	eventBus?: EventBus,
-	input?: ReadableStream<Uint8Array>,
+	setToolUIContext: ((uiContext: ExtensionUIContext, hasUI: boolean) => void) | undefined,
+	eventBus: EventBus | undefined,
+	input: ReadableStream<Uint8Array> | undefined,
+	options: import("./modes/rpc/rpc-mode").RunRpcModeOptions,
 ) => Promise<never>;
 
 export function writeStartupNotice(parsedArgs: Pick<Args, "mode">, text: string): void {
@@ -1641,9 +1642,16 @@ export async function runRootCommand(
 
 		if (mode === "rpc" || mode === "rpc-ui") {
 			// Branch-only protocol runner: keep RPC host code out of normal interactive startup.
-			const runRpcMode: RunRpcMode = (await import("./modes/rpc/rpc-mode")).runRpcMode;
+			const rpcModule = await import("./modes/rpc/rpc-mode");
+			const runRpcMode: RunRpcMode = rpcModule.runRpcMode;
 			stopStartupWatchdog();
-			await runRpcMode(session, mode === "rpc-ui" ? setToolUIContext : undefined, eventBus, rpcInput);
+			await runRpcMode(
+				session,
+				mode === "rpc-ui" ? setToolUIContext : undefined,
+				eventBus,
+				rpcInput,
+				rpcModule.forwardAllRpcSessionEvents,
+			);
 		} else if (isInteractive) {
 			const versionCheckPromise = checkForNewVersion(VERSION).catch(() => undefined);
 			const startupChangelog = await logger.time(

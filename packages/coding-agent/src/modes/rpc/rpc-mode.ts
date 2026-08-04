@@ -27,6 +27,7 @@ import { buildSkillPromptMessage, parseSkillInvocation } from "../../extensibili
 import { loadSlashCommands } from "../../extensibility/slash-commands";
 import { type Theme, theme } from "../../modes/theme/theme";
 import type { AgentSession } from "../../session/agent-session";
+import type { AgentSessionEvent } from "../../session/agent-session-events";
 import { SKILL_PROMPT_MESSAGE_TYPE, USER_INTERRUPT_LABEL } from "../../session/messages";
 import { executeAcpBuiltinSlashCommand } from "../../slash-commands/acp-builtins";
 import { buildAvailableSlashCommands } from "../../slash-commands/available-commands";
@@ -98,6 +99,60 @@ type RpcOutput = (
 		| RpcHostUriCancelRequest
 		| object,
 ) => void;
+
+export type RpcSessionEventProjection =
+	| { action: "forward"; event: AgentSessionEvent }
+	| { action: "drop" }
+	| { action: "replace"; event: AgentSessionEvent };
+
+export interface RunRpcModeOptions {
+	projectSessionEvent(event: AgentSessionEvent): RpcSessionEventProjection;
+	terminateOnProjectionFailure?(error: unknown): never;
+}
+
+export const forwardAllRpcSessionEvents: RunRpcModeOptions = {
+	projectSessionEvent: event => ({ action: "forward", event }),
+};
+
+function terminateProjectionFailure(_error: unknown): never {
+	process.stderr.write("RPC_SESSION_EVENT_PROJECTION_FAILED\n");
+	process.exit(1);
+}
+
+export function projectRpcSessionEvent(
+	event: AgentSessionEvent,
+	options: RunRpcModeOptions,
+): AgentSessionEvent | undefined {
+	try {
+		if (!options || typeof options.projectSessionEvent !== "function") {
+			throw new Error("RPC session event projector is required");
+		}
+		const result = options.projectSessionEvent(event);
+		if (!result || typeof result !== "object") {
+			throw new Error("invalid RPC session event projection");
+		}
+		if (result.action === "drop") return undefined;
+		if (result.action === "forward" || result.action === "replace") {
+			if (!result.event || typeof result.event !== "object") {
+				throw new Error("RPC session event projection returned no event");
+			}
+			return result.event;
+		}
+		throw new Error("invalid RPC session event projection action");
+	} catch (error) {
+		return (options?.terminateOnProjectionFailure ?? terminateProjectionFailure)(error);
+	}
+}
+
+export function createRpcSessionEventOutput(
+	output: (event: AgentSessionEvent) => void,
+	options: RunRpcModeOptions,
+): (event: AgentSessionEvent) => void {
+	return event => {
+		const projected = projectRpcSessionEvent(event, options);
+		if (projected !== undefined) output(projected);
+	};
+}
 
 export type RpcSessionChangeCommand = Extract<
 	RpcCommand,
@@ -661,10 +716,15 @@ export function requestRpcDialog<T>(
  */
 export async function runRpcMode(
 	session: AgentSession,
-	setToolUIContext?: (uiContext: ExtensionUIContext, hasUI: boolean) => void,
-	eventBus?: EventBus,
-	input: ReadableStream<Uint8Array> = claimRpcInput(),
+	setToolUIContext: ((uiContext: ExtensionUIContext, hasUI: boolean) => void) | undefined,
+	eventBus: EventBus | undefined,
+	input: ReadableStream<Uint8Array> | undefined,
+	options: RunRpcModeOptions,
 ): Promise<never> {
+	if (!options || typeof options.projectSessionEvent !== "function") {
+		terminateProjectionFailure(new Error("RPC session event projector is required"));
+	}
+	input ??= claimRpcInput();
 	// Signal to RPC clients that the server is ready to accept commands
 	// Suppress terminal notifications: they write \x07 (BEL) or OSC sequences directly to
 	// process.stdout with no newline, which the reader merges with the next JSON line and
@@ -949,9 +1009,7 @@ export async function runRpcMode(
 	});
 
 	// Output all agent events as JSON
-	session.subscribe(event => {
-		output(event);
-	});
+	session.subscribe(createRpcSessionEventOutput(output, options));
 
 	const getAvailableCommands = async () => buildAvailableSlashCommands(session);
 	const reloadPluginState = async () => {
