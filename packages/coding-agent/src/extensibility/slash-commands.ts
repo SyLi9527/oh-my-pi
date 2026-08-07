@@ -1,6 +1,7 @@
 import { parseFrontmatter, prompt } from "@oh-my-pi/pi-utils";
 import { slashCommandCapability } from "../capability/slash-command";
 import { appendInlineArgsFallback, templateUsesInlineArgPlaceholders } from "../config/prompt-templates";
+import { settings } from "../config/settings";
 import type { SlashCommand } from "../discovery";
 import { loadCapability } from "../discovery";
 import { EMBEDDED_COMMAND_TEMPLATES } from "../task/commands";
@@ -59,14 +60,28 @@ export interface LoadSlashCommandsOptions {
 	cwd?: string;
 }
 
+function readFileCommandAllowlist(): string[] | undefined {
+	try {
+		const value = settings.get("commands.fileCommandAllowlist") as unknown;
+		return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * Load all custom slash commands using the capability API.
  * Loads from all registered providers (builtin, user, project).
  */
 export async function loadSlashCommands(options: LoadSlashCommandsOptions = {}): Promise<FileSlashCommand[]> {
 	const result = await loadCapability<SlashCommand>(slashCommandCapability.id, { cwd: options.cwd });
+	const allowlist = readFileCommandAllowlist();
+	const items =
+		allowlist === undefined || allowlist.length === 0
+			? result.items
+			: result.items.filter(cmd => allowlist.includes(`${cmd._source.provider}:${cmd.level}`));
 
-	const fileCommands: FileSlashCommand[] = result.items.map(cmd => {
+	const fileCommands: FileSlashCommand[] = items.map(cmd => {
 		const { description, body } = parseCommandTemplate(cmd.content, {
 			source: cmd.path ?? `slash-command:${cmd.name}`,
 			level: cmd.level === "native" ? "fatal" : "warn",

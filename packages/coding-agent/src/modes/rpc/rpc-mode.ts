@@ -1176,6 +1176,11 @@ export async function runRpcMode(
 				return success(id, "get_available_commands", { commands: await getAvailableCommands() });
 			}
 
+			case "refresh_skills": {
+				await reloadPluginState();
+				return success(id, "refresh_skills");
+			}
+
 			case "set_todos": {
 				session.setTodoPhases(command.phases);
 				return success(id, "set_todos", { todoPhases: session.getTodoPhases() });

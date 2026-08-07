@@ -4817,6 +4817,19 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	// Restrict file-based slash commands to matching "<provider>:<level>" entries.
+	// An empty array preserves the current unrestricted behavior.
+	"commands.fileCommandAllowlist": {
+		type: "array",
+		default: [] as string[],
+		ui: {
+			tab: "tasks",
+			group: "Commands & Skills",
+			label: "File Command Allowlist",
+			description: "Restrict file slash commands to matching provider:level entries; empty allows all",
+		},
+	},
+
 	// ────────────────────────────────────────────────────────────────────────
 	// Providers
 	// ────────────────────────────────────────────────────────────────────────
