@@ -23,7 +23,7 @@ import {
 	resolveProviderCandidates,
 } from "./provider";
 import { renderSearchCall, renderSearchResult, type SearchRenderDetails } from "./render";
-import { type ExecuteSearchQueryOptions, executeSearchQuery } from "./runtime-core";
+import { type ExecuteSearchQueryOptions, executeSearchQuery, type ProviderTimeoutPolicy } from "./runtime-core";
 import type { SearchProviderId } from "./types";
 
 /** Web search tool parameters schema */
@@ -92,7 +92,8 @@ export async function runSearchQuery(
 		modelRegistry?: ModelRegistry;
 		sessionId?: string;
 		signal?: AbortSignal;
-		providerTimeoutMs?: number;
+		providerTimeoutMs?: ProviderTimeoutPolicy;
+		requireHttpSources?: boolean;
 	} = {},
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: SearchRenderDetails }> {
 	const createdAuthStorage = options.authStorage || options.modelRegistry ? undefined : await discoverAuthStorage();
@@ -108,6 +109,7 @@ export async function runSearchQuery(
 			sessionId: options.sessionId,
 			signal: options.signal,
 			providerTimeoutMs: options.providerTimeoutMs,
+			requireHttpSources: options.requireHttpSources,
 		});
 	} finally {
 		createdAuthStorage?.close();

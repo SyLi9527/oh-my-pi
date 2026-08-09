@@ -33,12 +33,15 @@ export interface SearchProviderRuntime {
 	): string;
 }
 
+export type ProviderTimeoutPolicy = number | ((providerId: SearchProviderId) => number | undefined);
+
 export interface ExecuteSearchQueryOptions {
 	authStorage: AuthStorage;
 	modelRegistry?: ModelRegistry;
 	sessionId?: string;
 	signal?: AbortSignal;
-	providerTimeoutMs?: number;
+	providerTimeoutMs?: ProviderTimeoutPolicy;
+	requireHttpSources?: boolean;
 	antigravityEndpointMode?: "auto" | "production" | "sandbox";
 	geminiModel?: string;
 }
@@ -102,6 +105,15 @@ function hasRenderableSearchContent(response: SearchResponse): boolean {
 	return false;
 }
 
+function isHttpSourceUrl(url: string): boolean {
+	try {
+		const protocol = new URL(url).protocol;
+		return protocol === "http:" || protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
 function failureMessage(category: SearchFailureAttempt["category"]): string {
 	switch (category) {
 		case "not_configured":
@@ -120,6 +132,8 @@ function failureMessage(category: SearchFailureAttempt["category"]): string {
 			return "provider returned a malformed response";
 		case "provider_unavailable":
 			return "provider unavailable";
+		case "budget_exhausted":
+			return "provider skipped because the shared search budget was exhausted";
 	}
 }
 
@@ -158,7 +172,7 @@ export async function executeSearchQuery(
 	options: ExecuteSearchQueryOptions,
 	runtime: SearchProviderRuntime,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: SearchRenderDetails }> {
-	const { authStorage, modelRegistry, sessionId, signal, providerTimeoutMs } = options;
+	const { authStorage, modelRegistry, sessionId, signal, providerTimeoutMs, requireHttpSources } = options;
 	const explicitProvider = params.provider;
 	const candidates =
 		explicitProvider && explicitProvider !== "auto"
@@ -178,6 +192,22 @@ export async function executeSearchQuery(
 		let attemptSignal: AbortSignal | undefined;
 		const providerMeta = { id: candidate.id, label: runtime.getSearchProviderLabel(candidate.id) };
 		lastProvider = providerMeta;
+		const attemptTimeoutMs =
+			typeof providerTimeoutMs === "function" ? providerTimeoutMs(candidate.id) : providerTimeoutMs;
+		if (attemptTimeoutMs !== undefined && attemptTimeoutMs <= 0) {
+			const error = new SearchProviderError(
+				candidate.id,
+				failureMessage("budget_exhausted"),
+				undefined,
+				"budget_exhausted",
+			);
+			failures.push({
+				provider: providerMeta,
+				error,
+				attempt: classifyFailure(candidate.id, error),
+			});
+			continue;
+		}
 		try {
 			provider = await runtime.getSearchProvider(candidate.id);
 			const available = candidate.explicit
@@ -193,11 +223,11 @@ export async function executeSearchQuery(
 			availableProviderCount++;
 			lastProvider = provider;
 			attemptSignal =
-				providerTimeoutMs === undefined
+				attemptTimeoutMs === undefined
 					? signal
 					: signal
-						? AbortSignal.any([signal, AbortSignal.timeout(providerTimeoutMs)])
-						: AbortSignal.timeout(providerTimeoutMs);
+						? AbortSignal.any([signal, AbortSignal.timeout(attemptTimeoutMs)])
+						: AbortSignal.timeout(attemptTimeoutMs);
 
 			const response = await provider.search({
 				query: params.query,
@@ -227,6 +257,20 @@ export async function executeSearchQuery(
 					constraintNotes.push(`no results matched \`${label}\`; the constraint was relaxed`);
 				}
 			}
+			if (requireHttpSources) {
+				const sources = finalResponse.sources.filter(source => isHttpSourceUrl(source.url));
+				if (sources.length !== finalResponse.sources.length) {
+					finalResponse = { ...finalResponse, sources };
+				}
+				if (sources.length === 0) {
+					throw new SearchProviderError(
+						provider.id,
+						`${provider.label} returned no HTTP(S) search sources.`,
+						204,
+						"empty_result",
+					);
+				}
+			}
 
 			if (!hasRenderableSearchContent(finalResponse)) {
 				throw new SearchProviderError(provider.id, `${provider.label} returned no renderable search content.`, 204);
@@ -234,7 +278,10 @@ export async function executeSearchQuery(
 
 			return {
 				content: [{ type: "text", text: formatForLLM(finalResponse, constraintNotes) }],
-				details: { response: finalResponse },
+				details: {
+					response: finalResponse,
+					...(failures.length === 0 ? {} : { failures: failures.map(failure => failure.attempt) }),
+				},
 			};
 		} catch (error) {
 			throwIfAborted(signal);
@@ -245,7 +292,7 @@ export async function executeSearchQuery(
 				attempt: classifyFailure(
 					failedProvider.id,
 					error,
-					providerTimeoutMs !== undefined && attemptSignal?.aborted === true,
+					attemptTimeoutMs !== undefined && attemptSignal?.aborted === true,
 				),
 			});
 		}

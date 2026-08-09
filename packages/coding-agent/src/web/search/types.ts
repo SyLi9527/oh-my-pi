@@ -181,7 +181,8 @@ export type SearchFailureCategory =
 	| "timeout"
 	| "empty_result"
 	| "malformed_response"
-	| "provider_unavailable";
+	| "provider_unavailable"
+	| "budget_exhausted";
 
 /** Structured metadata for one failed provider attempt. */
 export interface SearchFailureAttempt {

@@ -263,7 +263,97 @@ describe("executeSearch abort propagation", () => {
 		);
 
 		expect(result.details.response.provider).toBe("brave");
-		expect(result.details.failures).toBeUndefined();
+		expect(result.details.failures).toEqual([
+			{ provider: "parallel", category: "timeout", message: "provider attempt timed out" },
+		]);
+	});
+
+	it("skips an attempt whose dynamic budget is exhausted and continues", async () => {
+		const firstSearch = vi.fn(async (): Promise<SearchResponse> => {
+			throw new Error("must not run");
+		});
+		const secondSearch = vi.fn(
+			async (): Promise<SearchResponse> => ({
+				provider: "duckduckgo",
+				sources: [{ title: "Public", url: "https://example.com/public" }],
+			}),
+		);
+		mockProviderChain([fakeProvider("brave", firstSearch), fakeProvider("duckduckgo", secondSearch)]);
+
+		const result = await runSearchQuery(
+			{ query: "x" },
+			{
+				authStorage: {} as AuthStorage,
+				requireHttpSources: true,
+				providerTimeoutMs: id => (id === "brave" ? 0 : 6_000),
+			},
+		);
+
+		expect(firstSearch).not.toHaveBeenCalled();
+		expect(secondSearch).toHaveBeenCalledTimes(1);
+		expect(result.details.failures).toContainEqual({
+			provider: "brave",
+			category: "budget_exhausted",
+			message: "provider skipped because the shared search budget was exhausted",
+		});
+		expect(result.details.response.provider).toBe("duckduckgo");
+	});
+
+	it.each([
+		{ provider: "parallel", sources: [], answer: "uncited answer" },
+		{ provider: "parallel", sources: [{ title: "Local", url: "file:///tmp/a" }] },
+	] as const)("continues when a result has no valid HTTP source", async response => {
+		const primarySearch = vi.fn(
+			async (): Promise<SearchResponse> => ({
+				provider: response.provider,
+				sources: [...response.sources],
+				...("answer" in response ? { answer: response.answer } : {}),
+			}),
+		);
+		const fallbackSearch = vi.fn(
+			async (): Promise<SearchResponse> => ({
+				provider: "duckduckgo",
+				sources: [{ title: "Public", url: "https://example.com/public" }],
+			}),
+		);
+		mockProviderChain([fakeProvider("parallel", primarySearch), fakeProvider("duckduckgo", fallbackSearch)]);
+
+		const result = await runSearchQuery(
+			{ query: "source required" },
+			{ authStorage: {} as AuthStorage, requireHttpSources: true },
+		);
+
+		expect(primarySearch).toHaveBeenCalledTimes(1);
+		expect(fallbackSearch).toHaveBeenCalledTimes(1);
+		expect(result.details.response.provider).toBe("duckduckgo");
+		expect(result.details.failures).toContainEqual({
+			provider: "parallel",
+			category: "empty_result",
+			message: "provider returned an empty result",
+			status: 204,
+		});
+	});
+
+	it("preserves caller cancellation instead of treating it as exhausted budget", async () => {
+		const controller = new AbortController();
+		const cancelledSearch = vi.fn(async (params: SearchParams): Promise<SearchResponse> => {
+			params.signal?.throwIfAborted();
+			return { provider: "parallel", sources: [] };
+		});
+		mockProviderChain([fakeProvider("parallel", cancelledSearch)]);
+		controller.abort(new Error("user cancelled"));
+
+		await expect(
+			runSearchQuery(
+				{ query: "cancel me" },
+				{
+					authStorage: {} as AuthStorage,
+					signal: controller.signal,
+					providerTimeoutMs: () => 10_000,
+				},
+			),
+		).rejects.toThrow();
+		expect(cancelledSearch).toHaveBeenCalledTimes(1);
 	});
 
 	it("still reports provider failures as a tool result when the caller has not aborted", async () => {

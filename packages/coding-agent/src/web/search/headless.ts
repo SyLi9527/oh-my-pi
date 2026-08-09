@@ -11,6 +11,7 @@ import { TavilyProvider } from "./providers/tavily";
 import { ZhipuProvider } from "./providers/zhipu";
 import {
 	executeSearchQuery,
+	type ProviderTimeoutPolicy,
 	type SearchProviderCandidate,
 	type SearchProviderRuntime,
 	type SearchQueryParams,
@@ -104,7 +105,8 @@ export function runSearchQuery(
 		modelRegistry?: ModelRegistry;
 		sessionId?: string;
 		signal?: AbortSignal;
-		providerTimeoutMs?: number;
+		providerTimeoutMs?: ProviderTimeoutPolicy;
+		requireHttpSources?: boolean;
 	},
 ) {
 	return executeSearchQuery(params, options, runtime);
