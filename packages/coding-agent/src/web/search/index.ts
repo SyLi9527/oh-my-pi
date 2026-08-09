@@ -29,7 +29,7 @@ import {
 } from "./provider";
 import { applyQueryConstraints, parseSearchQuery } from "./query";
 import { renderSearchCall, renderSearchResult, type SearchRenderDetails } from "./render";
-import type { SearchProviderId, SearchResponse } from "./types";
+import type { SearchFailureAttempt, SearchProviderId, SearchResponse } from "./types";
 import { SearchProviderError } from "./types";
 
 /** Web search tool parameters schema */
@@ -126,6 +126,62 @@ interface ExecuteSearchOptions {
 	modelRegistry?: ModelRegistry;
 	sessionId?: string;
 	signal?: AbortSignal;
+	providerTimeoutMs?: number;
+}
+
+function failureMessage(category: SearchFailureAttempt["category"]): string {
+	switch (category) {
+		case "not_configured":
+			return "No web search provider configured.";
+		case "auth_failed":
+			return "provider authentication failed";
+		case "quota_exhausted":
+			return "provider quota exhausted";
+		case "rate_limited":
+			return "provider rate limited";
+		case "timeout":
+			return "provider attempt timed out";
+		case "empty_result":
+			return "provider returned an empty result";
+		case "malformed_response":
+			return "provider returned a malformed response";
+		case "provider_unavailable":
+			return "provider unavailable";
+	}
+}
+
+function classifyFailure(
+	provider: SearchProviderId | "none",
+	error: unknown,
+	attemptTimedOut = false,
+): SearchFailureAttempt {
+	if (attemptTimedOut || (error instanceof Error && error.name === "TimeoutError")) {
+		return { provider, category: "timeout", message: failureMessage("timeout") };
+	}
+	if (error instanceof SearchProviderError) {
+		const category =
+			error.category ??
+			(error.status === 401 || error.status === 403
+				? "auth_failed"
+				: error.status === 402
+					? "quota_exhausted"
+					: error.status === 429
+						? "rate_limited"
+						: error.status === 204
+							? "empty_result"
+							: "provider_unavailable");
+		return {
+			provider,
+			category,
+			message: failureMessage(category),
+			...(error.status === undefined ? {} : { status: error.status }),
+		};
+	}
+	return {
+		provider,
+		category: "provider_unavailable",
+		message: failureMessage("provider_unavailable"),
+	};
 }
 
 /** Execute web search */
@@ -134,7 +190,7 @@ async function executeSearch(
 	params: SearchQueryParams,
 	options: ExecuteSearchOptions,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: SearchRenderDetails }> {
-	const { authStorage, modelRegistry, sessionId, signal } = options;
+	const { authStorage, modelRegistry, sessionId, signal, providerTimeoutMs } = options;
 	const explicitProvider = params.provider;
 	let candidates: SearchProviderCandidate[];
 	if (explicitProvider && explicitProvider !== "auto") {
@@ -164,11 +220,16 @@ async function executeSearch(
 		geminiModel = undefined;
 	}
 
-	const failures: Array<{ provider: Pick<SearchProvider, "id" | "label">; error: unknown }> = [];
+	const failures: Array<{
+		provider: Pick<SearchProvider, "id" | "label">;
+		error: unknown;
+		attempt: SearchFailureAttempt;
+	}> = [];
 	let availableProviderCount = 0;
 	let lastProvider: Pick<SearchProvider, "id" | "label"> | undefined;
 	for (const candidate of candidates) {
 		let provider: SearchProvider | undefined;
+		let attemptSignal: AbortSignal | undefined;
 		const providerMeta = { id: candidate.id, label: getSearchProviderLabel(candidate.id) };
 		lastProvider = providerMeta;
 		try {
@@ -185,6 +246,12 @@ async function executeSearch(
 			}
 			availableProviderCount++;
 			lastProvider = provider;
+			attemptSignal =
+				providerTimeoutMs === undefined
+					? signal
+					: signal
+						? AbortSignal.any([signal, AbortSignal.timeout(providerTimeoutMs)])
+						: AbortSignal.timeout(providerTimeoutMs);
 
 			const response = await provider.search({
 				query: params.query,
@@ -195,7 +262,7 @@ async function executeSearch(
 				maxOutputTokens: params.max_tokens,
 				numSearchResults: params.num_search_results,
 				temperature: params.temperature,
-				signal,
+				signal: attemptSignal,
 				authStorage,
 				modelRegistry,
 				sessionId,
@@ -236,7 +303,16 @@ async function executeSearch(
 			// failure and the loop falls through to the next provider (or to the
 			// summary error), masking the cancellation.
 			throwIfAborted(signal);
-			failures.push({ provider: provider ?? providerMeta, error });
+			const failedProvider = provider ?? providerMeta;
+			failures.push({
+				provider: failedProvider,
+				error,
+				attempt: classifyFailure(
+					failedProvider.id,
+					error,
+					providerTimeoutMs !== undefined && attemptSignal?.aborted === true,
+				),
+			});
 		}
 	}
 
@@ -244,7 +320,11 @@ async function executeSearch(
 		const message = "No web search provider configured.";
 		return {
 			content: [{ type: "text" as const, text: `Error: ${message}` }],
-			details: { response: { provider: "none", sources: [] }, error: message },
+			details: {
+				response: { provider: "none", sources: [] },
+				error: message,
+				failures: [{ provider: "none", category: "not_configured", message }],
+			},
 		};
 	}
 
@@ -260,6 +340,7 @@ async function executeSearch(
 		details: {
 			response: { provider: lastFailure?.provider.id ?? lastProvider?.id ?? "none", sources: [] },
 			error: message,
+			failures: failures.map(failure => failure.attempt),
 		},
 	};
 }
@@ -273,7 +354,13 @@ async function executeSearch(
  */
 export async function runSearchQuery(
 	params: SearchQueryParams,
-	options: { authStorage?: AuthStorage; modelRegistry?: ModelRegistry; sessionId?: string; signal?: AbortSignal } = {},
+	options: {
+		authStorage?: AuthStorage;
+		modelRegistry?: ModelRegistry;
+		sessionId?: string;
+		signal?: AbortSignal;
+		providerTimeoutMs?: number;
+	} = {},
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: SearchRenderDetails }> {
 	const createdAuthStorage = options.authStorage || options.modelRegistry ? undefined : await discoverAuthStorage();
 	const authStorage = options.authStorage ?? options.modelRegistry?.authStorage ?? createdAuthStorage;
@@ -287,6 +374,7 @@ export async function runSearchQuery(
 			modelRegistry,
 			sessionId: options.sessionId,
 			signal: options.signal,
+			providerTimeoutMs: options.providerTimeoutMs,
 		});
 	} finally {
 		createdAuthStorage?.close();

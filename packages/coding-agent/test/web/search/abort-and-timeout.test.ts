@@ -21,7 +21,7 @@ import * as provider from "@oh-my-pi/pi-coding-agent/web/search/provider";
 import { searchAnthropic } from "@oh-my-pi/pi-coding-agent/web/search/providers/anthropic";
 import type { SearchParams } from "@oh-my-pi/pi-coding-agent/web/search/providers/base";
 import { searchBrave } from "@oh-my-pi/pi-coding-agent/web/search/providers/brave";
-import { withHardTimeout } from "@oh-my-pi/pi-coding-agent/web/search/providers/utils";
+import { classifyProviderHttpError, withHardTimeout } from "@oh-my-pi/pi-coding-agent/web/search/providers/utils";
 import {
 	SearchProviderError,
 	type SearchProviderId,
@@ -214,6 +214,58 @@ describe("executeSearch abort propagation", () => {
 		expect(secondProviderSearch).not.toHaveBeenCalled();
 	});
 
+	it("does not fall through when the caller aborts a bounded provider attempt", async () => {
+		const ac = new AbortController();
+		const fallbackSearch = vi.fn();
+		mockProviderChain([
+			fakeProvider(
+				"parallel",
+				({ signal }) =>
+					new Promise((_resolve, reject) => {
+						signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+						ac.abort(new Error("caller cancelled"));
+					}),
+			),
+			fakeProvider("brave", fallbackSearch),
+		]);
+
+		await expect(
+			runSearchQuery(
+				{ query: "cancelled" },
+				{ authStorage: {} as AuthStorage, signal: ac.signal, providerTimeoutMs: 60_000 },
+			),
+		).rejects.toBeInstanceOf(ToolAbortError);
+		expect(fallbackSearch).not.toHaveBeenCalled();
+	});
+
+	it("falls back after an attempt timeout without treating it as caller cancellation", async () => {
+		mockProviderChain([
+			fakeProvider("parallel", async ({ signal }) => {
+				if (!signal) {
+					return {
+						provider: "parallel",
+						sources: [{ title: "Unbounded result", url: "https://example.com/unbounded" }],
+					};
+				}
+				return new Promise((_resolve, reject) => {
+					signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+				});
+			}),
+			fakeProvider("brave", async () => ({
+				provider: "brave",
+				sources: [{ title: "Bounded fallback", url: "https://example.com/fallback" }],
+			})),
+		]);
+
+		const result = await runSearchQuery(
+			{ query: "fallback" },
+			{ authStorage: {} as AuthStorage, providerTimeoutMs: 10 },
+		);
+
+		expect(result.details.response.provider).toBe("brave");
+		expect(result.details.failures).toBeUndefined();
+	});
+
 	it("still reports provider failures as a tool result when the caller has not aborted", async () => {
 		// Defensive: the abort re-throw must NOT alter normal provider-error
 		// flow. A genuine provider error should still produce an error result
@@ -230,6 +282,139 @@ describe("executeSearch abort propagation", () => {
 		expect(block?.type).toBe("text");
 		expect(block && "text" in block ? block.text : "").toContain("upstream 500");
 		expect(result.details?.error).toContain("upstream 500");
+	});
+
+	it("records ordered failure categories when every provider fails", async () => {
+		mockProviderChain([
+			fakeProvider("parallel", async () => {
+				throw new SearchProviderError("parallel", "Parallel authorization failed.", 401);
+			}),
+			fakeProvider("brave", async () => {
+				throw new SearchProviderError("brave", "Brave rate limit reached.", 429);
+			}),
+		]);
+
+		const result = await runSearchQuery({ query: "failures" }, { authStorage: {} as AuthStorage });
+
+		expect(result.details.failures).toEqual([
+			{
+				provider: "parallel",
+				category: "auth_failed",
+				message: "provider authentication failed",
+				status: 401,
+			},
+			{
+				provider: "brave",
+				category: "rate_limited",
+				message: "provider rate limited",
+				status: 429,
+			},
+		]);
+	});
+
+	it.each([
+		["quota status", new SearchProviderError("parallel", "Payment required.", 402), "quota_exhausted"],
+		["empty response", new SearchProviderError("parallel", "No content.", 204), "empty_result"],
+		[
+			"malformed response",
+			new SearchProviderError("parallel", "Malformed payload.", 200, "malformed_response"),
+			"malformed_response",
+		],
+		["unavailable provider", new Error("Connection refused."), "provider_unavailable"],
+	] as const)("classifies a %s failure", async (_label, failure, expectedCategory) => {
+		mockProviderChain([
+			fakeProvider("parallel", async () => {
+				throw failure;
+			}),
+		]);
+
+		const result = await runSearchQuery({ query: "classified" }, { authStorage: {} as AuthStorage });
+
+		expect(result.details.failures?.[0]?.category).toBe(expectedCategory);
+	});
+
+	it("records an attempt timeout with a stable sanitized message when every provider times out", async () => {
+		mockProviderChain([
+			fakeProvider(
+				"parallel",
+				({ signal }) =>
+					new Promise((_resolve, reject) =>
+						signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
+					),
+			),
+		]);
+
+		const result = await runSearchQuery(
+			{ query: "timeout" },
+			{ authStorage: {} as AuthStorage, providerTimeoutMs: 10 },
+		);
+
+		expect(result.details.failures).toEqual([
+			{ provider: "parallel", category: "timeout", message: "provider attempt timed out" },
+		]);
+	});
+
+	it("uses the attempt signal to classify a wrapped timeout error", async () => {
+		mockProviderChain([
+			fakeProvider(
+				"parallel",
+				({ signal }) =>
+					new Promise((_resolve, reject) =>
+						signal?.addEventListener(
+							"abort",
+							() => reject(new DOMException("provider wrapped the timeout", "AbortError")),
+							{ once: true },
+						),
+					),
+			),
+		]);
+
+		const result = await runSearchQuery(
+			{ query: "wrapped timeout" },
+			{ authStorage: {} as AuthStorage, providerTimeoutMs: 10 },
+		);
+
+		expect(result.details.failures).toEqual([
+			{ provider: "parallel", category: "timeout", message: "provider attempt timed out" },
+		]);
+	});
+
+	it("keeps raw upstream response bodies out of structured failures", async () => {
+		const sensitiveBody = '{"error":"upstream account secret api_key=sk-sensitive"}';
+		mockProviderChain([
+			fakeProvider("parallel", async () => {
+				throw new SearchProviderError("parallel", `Parallel API error (500): ${sensitiveBody}`, 500);
+			}),
+		]);
+
+		const result = await runSearchQuery({ query: "sensitive failure" }, { authStorage: {} as AuthStorage });
+
+		expect(result.details.error).toContain(sensitiveBody);
+		expect(result.details.failures).toEqual([
+			{
+				provider: "parallel",
+				category: "provider_unavailable",
+				message: "provider unavailable",
+				status: 500,
+			},
+		]);
+		expect(JSON.stringify(result.details.failures)).not.toContain("sk-sensitive");
+	});
+
+	it("returns a structured not-configured failure without changing the visible error", async () => {
+		const unavailable = fakeProvider("parallel", async () => {
+			throw new Error("search must not run");
+		});
+		unavailable.isAvailable = () => false;
+		mockProviderChain([unavailable]);
+
+		const result = await runSearchQuery({ query: "unconfigured" }, { authStorage: {} as AuthStorage });
+
+		expect(result.content).toEqual([{ type: "text", text: "Error: No web search provider configured." }]);
+		expect(result.details.error).toBe("No web search provider configured.");
+		expect(result.details.failures).toEqual([
+			{ provider: "none", category: "not_configured", message: "No web search provider configured." },
+		]);
 	});
 
 	it("falls through when a provider returns no renderable search content", async () => {
@@ -325,5 +510,19 @@ describe("executeSearch abort propagation", () => {
 		expect(result.details?.response.provider).toBe("codex");
 		expect(getProvider).toHaveBeenCalledTimes(1);
 		expect(fallbackSearch).not.toHaveBeenCalled();
+	});
+});
+
+describe("classifyProviderHttpError", () => {
+	it.each([
+		[402, "quota_exhausted", "sensitive payment response", "parallel: 402 credits exhausted"],
+		[429, "quota_exhausted", "quota exceeded: secret account payload", "parallel: 429 credits exhausted"],
+		[401, "auth_failed", "sensitive authentication response", "parallel: 401 unauthorized"],
+		[403, "auth_failed", "sensitive authentication response", "parallel: 403 forbidden"],
+	] as const)("classifies HTTP %d as %s without retaining the upstream body", (status, category, body, message) => {
+		const error = classifyProviderHttpError("parallel", status, body);
+
+		expect(error).toMatchObject({ provider: "parallel", status, category, message });
+		expect(error?.message).not.toContain(body);
 	});
 });

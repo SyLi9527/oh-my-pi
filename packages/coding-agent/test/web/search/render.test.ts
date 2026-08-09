@@ -97,4 +97,40 @@ describe("renderSearchResult", () => {
 		expect(answer).toMatch(/more line/);
 		expect(answer).not.toContain("FINAL_UNIQUE_MARKER");
 	});
+
+	it("keeps structured failures out of the visible error panel", async () => {
+		const uiTheme = (await getThemeByName("dark"))!;
+		const visibleError = "All web search providers failed.";
+		const withoutFailures = renderSearchResult(
+			{
+				content: [{ type: "text", text: `Error: ${visibleError}` }],
+				details: { response: { provider: "brave", sources: [] }, error: visibleError },
+			},
+			{ expanded: true, isPartial: false },
+			uiTheme,
+		);
+		const withFailures = renderSearchResult(
+			{
+				content: [{ type: "text", text: `Error: ${visibleError}` }],
+				details: {
+					response: { provider: "brave", sources: [] },
+					error: visibleError,
+					failures: [
+						{
+							provider: "brave",
+							category: "auth_failed",
+							message: "structured diagnostic must stay hidden",
+							status: 401,
+						},
+					],
+				},
+			},
+			{ expanded: true, isPartial: false },
+			uiTheme,
+		);
+
+		expect(withFailures.render(120).map(line => sanitizeText(line))).toEqual(
+			withoutFailures.render(120).map(line => sanitizeText(line)),
+		);
+	});
 });

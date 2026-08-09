@@ -167,8 +167,24 @@ export interface SearchResponse {
 	authMode?: string;
 }
 
-/** Provider-specific error classifications currently emitted by search providers. */
-export type SearchProviderErrorCategory = "malformed_response";
+/** Stable categories for failed search-provider attempts. */
+export type SearchFailureCategory =
+	| "not_configured"
+	| "auth_failed"
+	| "quota_exhausted"
+	| "rate_limited"
+	| "timeout"
+	| "empty_result"
+	| "malformed_response"
+	| "provider_unavailable";
+
+/** Structured metadata for one failed provider attempt. */
+export interface SearchFailureAttempt {
+	provider: SearchProviderId | "none";
+	category: SearchFailureCategory;
+	message: string;
+	status?: number;
+}
 
 /** Provider-specific error with optional HTTP status and classification. */
 export class SearchProviderError extends Error {
@@ -176,7 +192,7 @@ export class SearchProviderError extends Error {
 		public readonly provider: SearchProviderId,
 		message: string,
 		public readonly status?: number,
-		public readonly category?: SearchProviderErrorCategory,
+		public readonly category?: SearchFailureCategory,
 	) {
 		super(message);
 		this.name = "SearchProviderError";

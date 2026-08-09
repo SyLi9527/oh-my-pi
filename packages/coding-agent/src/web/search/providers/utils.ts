@@ -112,17 +112,14 @@ export function classifyProviderHttpError(
 	status: number,
 	body: string,
 ): SearchProviderError | null {
-	if (CREDIT_BODY_PATTERN.test(body)) {
-		return new SearchProviderError(provider, `${provider}: credits exhausted`, status);
-	}
-	if (status === 402) {
-		return new SearchProviderError(provider, `${provider}: 402 credits exhausted`, status);
+	if (CREDIT_BODY_PATTERN.test(body) || status === 402) {
+		return new SearchProviderError(provider, `${provider}: ${status} credits exhausted`, status, "quota_exhausted");
 	}
 	if (status === 401) {
-		return new SearchProviderError(provider, `${provider}: 401 unauthorized`, status);
+		return new SearchProviderError(provider, `${provider}: 401 unauthorized`, status, "auth_failed");
 	}
 	if (status === 403) {
-		return new SearchProviderError(provider, `${provider}: 403 forbidden`, status);
+		return new SearchProviderError(provider, `${provider}: 403 forbidden`, status, "auth_failed");
 	}
 	return null;
 }
