@@ -32,6 +32,7 @@ export const SEARCH_PROVIDER_OPTIONS = [
 	},
 	{ value: "xai", label: "xAI", description: "Grok web search via xAI Responses API (requires XAI_API_KEY)" },
 	{ value: "zai", label: "Z.AI", description: "Calls Z.AI webSearchPrime MCP" },
+	{ value: "zhipu", label: "Zhipu Web Search", description: "Requires ZHIPU_API_KEY" },
 	{ value: "exa", label: "Exa", description: "API via /login exa or EXA_API_KEY; explicit keyless fallback via MCP" },
 	{ value: "tinyfish", label: "TinyFish", description: "Requires TINYFISH_API_KEY" },
 	{ value: "jina", label: "Jina", description: "Requires JINA_API_KEY" },
@@ -166,12 +167,16 @@ export interface SearchResponse {
 	authMode?: string;
 }
 
-/** Provider-specific error with optional HTTP status */
+/** Provider-specific error classifications currently emitted by search providers. */
+export type SearchProviderErrorCategory = "malformed_response";
+
+/** Provider-specific error with optional HTTP status and classification. */
 export class SearchProviderError extends Error {
 	constructor(
 		public readonly provider: SearchProviderId,
 		message: string,
 		public readonly status?: number,
+		public readonly category?: SearchProviderErrorCategory,
 	) {
 		super(message);
 		this.name = "SearchProviderError";

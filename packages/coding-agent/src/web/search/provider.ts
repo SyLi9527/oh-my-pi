@@ -54,6 +54,11 @@ const PROVIDER_META: Record<SearchProviderId, ProviderMeta> = {
 		label: SEARCH_PROVIDER_LABELS.zai,
 		load: async () => new (await import("./providers/zai")).ZaiProvider(),
 	},
+	zhipu: {
+		id: "zhipu",
+		label: SEARCH_PROVIDER_LABELS.zhipu,
+		load: async () => new (await import("./providers/zhipu")).ZhipuProvider(),
+	},
 	exa: {
 		id: "exa",
 		label: SEARCH_PROVIDER_LABELS.exa,
