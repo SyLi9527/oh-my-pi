@@ -21,6 +21,7 @@ const ENV_KEYS = [
 	"UMANS_AI_CODING_PLAN_API_KEY",
 	"LLAMA_CPP_API_KEY",
 	"WANDB_API_KEY",
+	"ZHIPU_API_KEY",
 ] as const;
 const originalEnv = new Map(ENV_KEYS.map(key => [key, Bun.env[key]]));
 
@@ -59,6 +60,11 @@ describe("provider registry auth surface", () => {
 		expect(getEnvApiKey("coreweave")).toBe("wandb-env");
 		Bun.env.COREWEAVE_API_KEY = "coreweave-env";
 		expect(getEnvApiKey("coreweave")).toBe("coreweave-env");
+	});
+
+	test("maps the zhipu search alias to ZHIPU_API_KEY", () => {
+		process.env.ZHIPU_API_KEY = "zhipu-search-key";
+		expect(getEnvApiKey("zhipu")).toBe("zhipu-search-key");
 	});
 
 	test("login list contains loginable providers and excludes env-only model providers", () => {

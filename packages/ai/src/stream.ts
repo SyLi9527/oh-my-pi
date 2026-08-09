@@ -699,6 +699,7 @@ const LEGACY_ENV_KEYS: Record<string, KeyResolver> = {
 	"azure-openai-responses": "AZURE_OPENAI_API_KEY",
 	jina: "JINA_API_KEY",
 	brave: "BRAVE_API_KEY",
+	zhipu: "ZHIPU_API_KEY",
 	tinyfish: "TINYFISH_API_KEY",
 	firecrawl: "FIRECRAWL_API_KEY",
 };

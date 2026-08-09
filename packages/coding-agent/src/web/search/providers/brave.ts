@@ -4,7 +4,7 @@
  * Calls Brave's web search REST API and maps results into the unified
  * SearchResponse shape used by the web search tool.
  */
-import { type AuthStorage, type FetchImpl, getEnvApiKey } from "@oh-my-pi/pi-ai";
+import { type AuthStorage, type FetchImpl, getEnvApiKey, withAuth } from "@oh-my-pi/pi-ai";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
 import type { QuerySyntax, StructuredQuery } from "../query";
@@ -69,11 +69,6 @@ interface BraveSearchResponse {
 	};
 }
 
-/** Find BRAVE_API_KEY from environment or .env files. */
-export function findApiKey(): string | null {
-	return getEnvApiKey("brave") ?? null;
-}
-
 function buildSnippet(result: BraveSearchResult): string | undefined {
 	const snippets: string[] = [];
 
@@ -128,25 +123,21 @@ async function callBraveSearch(
 	return { response: data, requestId };
 }
 
-/** Execute Brave web search. */
-export async function searchBrave(params: BraveSearchParams): Promise<SearchResponse> {
-	const numResults = clampNumResults(params.num_results, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS);
-	const apiKey = findApiKey();
-	if (!apiKey) {
-		throw new Error("BRAVE_API_KEY not found. Set it in environment or .env file.");
-	}
-
-	const { response, requestId } = await callBraveSearch(apiKey, params);
+function mapBraveResponse(
+	result: { response: BraveSearchResponse; requestId?: string },
+	numResults: number,
+): SearchResponse {
+	const { response, requestId } = result;
 	const sources: SearchSource[] = [];
 
-	for (const result of response.web?.results ?? []) {
-		if (!result.url) continue;
+	for (const item of response.web?.results ?? []) {
+		if (!item.url) continue;
 		sources.push({
-			title: result.title ?? result.url,
-			url: result.url,
-			snippet: buildSnippet(result),
-			publishedDate: result.age ?? undefined,
-			ageSeconds: dateToAgeSeconds(result.age),
+			title: item.title ?? item.url,
+			url: item.url,
+			snippet: buildSnippet(item),
+			publishedDate: item.age ?? undefined,
+			ageSeconds: dateToAgeSeconds(item.age),
 		});
 	}
 
@@ -157,23 +148,39 @@ export async function searchBrave(params: BraveSearchParams): Promise<SearchResp
 	};
 }
 
+/** Execute Brave web search through the caller's AuthStorage. */
+export async function searchBrave(params: SearchParams): Promise<SearchResponse> {
+	const numResults = clampNumResults(params.numSearchResults ?? params.limit, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS);
+	const resolver = params.authStorage.resolver("brave", { sessionId: params.sessionId });
+	const result = await withAuth(
+		resolver,
+		key =>
+			callBraveSearch(key, {
+				query: params.query,
+				num_results: params.numSearchResults ?? params.limit,
+				recency: params.recency,
+				parsedQuery: params.parsedQuery,
+				signal: params.signal,
+				fetch: params.fetch,
+			}),
+		{
+			signal: params.signal,
+			missingKeyMessage: "Brave credentials not found.",
+		},
+	);
+	return mapBraveResponse(result, numResults);
+}
+
 /** Search provider for Brave web search. */
 export class BraveProvider extends SearchProvider {
 	readonly id = "brave";
 	readonly label = "Brave";
 
-	isAvailable(_authStorage: AuthStorage): boolean {
-		return !!findApiKey();
+	isAvailable(authStorage: AuthStorage): boolean {
+		return authStorage.hasAuth("brave") || Boolean(getEnvApiKey("brave"));
 	}
 
 	search(params: SearchParams): Promise<SearchResponse> {
-		return searchBrave({
-			query: params.query,
-			num_results: params.numSearchResults ?? params.limit,
-			recency: params.recency,
-			parsedQuery: params.parsedQuery,
-			signal: params.signal,
-			fetch: params.fetch,
-		});
+		return searchBrave(params);
 	}
 }
