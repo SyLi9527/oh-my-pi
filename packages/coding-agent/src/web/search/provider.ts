@@ -10,6 +10,7 @@
 
 import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import type { SearchProvider } from "./providers/base";
+import { BingProvider } from "./providers/bing";
 import { SEARCH_PROVIDER_LABELS, SEARCH_PROVIDER_ORDER, SearchProviderError, type SearchProviderId } from "./types";
 
 export type { SearchParams } from "./providers/base";
@@ -118,6 +119,11 @@ const PROVIDER_META: Record<SearchProviderId, ProviderMeta> = {
 		id: "duckduckgo",
 		label: SEARCH_PROVIDER_LABELS.duckduckgo,
 		load: async () => new (await import("./providers/duckduckgo")).DuckDuckGoProvider(),
+	},
+	bing: {
+		id: "bing",
+		label: SEARCH_PROVIDER_LABELS.bing,
+		load: async () => new BingProvider(),
 	},
 	google: {
 		id: "google",

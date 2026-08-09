@@ -1,4 +1,4 @@
-import type { AuthStorage } from "@oh-my-pi/pi-ai";
+import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
 import type { QuerySyntax } from "../query";
@@ -6,7 +6,7 @@ import { formatScraperQuery } from "../query";
 import { clampNumResults } from "../utils";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { browserFetch } from "./browser-page";
+import { fetchPublicSearchPage } from "./public-http";
 import { classifyProviderHttpError, withHardTimeout } from "./utils";
 
 /**
@@ -147,8 +147,8 @@ async function callDuckDuckGoHtml(params: SearchParams): Promise<string> {
 	// Add b: "" parameter as specified in the browser fetch template to match real browser form submission
 	form.set("b", "");
 
-	const page = await browserFetch(DUCKDUCKGO_HTML_URL, {
-		fetch: params.fetch ?? fetch,
+	const page = await fetchPublicSearchPage(DUCKDUCKGO_HTML_URL, {
+		fetch: params.fetch,
 		signal: withHardTimeout(params.signal),
 		referer: "https://html.duckduckgo.com/",
 		init: {
@@ -159,18 +159,18 @@ async function callDuckDuckGoHtml(params: SearchParams): Promise<string> {
 	});
 
 	const body = page.html;
+	if (isAnomalyResponse(body)) {
+		throw new SearchProviderError(
+			"duckduckgo",
+			"DuckDuckGo returned a bot-detection challenge.",
+			429,
+			"rate_limited",
+		);
+	}
 	if (page.status < 200 || page.status >= 300) {
 		const classified = classifyProviderHttpError("duckduckgo", page.status, body);
 		if (classified) throw classified;
 		throw new SearchProviderError("duckduckgo", `DuckDuckGo HTML error (${page.status})`, page.status);
-	}
-
-	if (isAnomalyResponse(body)) {
-		throw new SearchProviderError(
-			"duckduckgo",
-			"DuckDuckGo blocked the request with a bot-detection challenge. DuckDuckGo throttles automated HTML searches from datacenter/shared-egress IPs; configure a credentialed provider such as Brave, Tavily, Exa, or Kagi for reliable web search.",
-			429,
-		);
 	}
 
 	return body;

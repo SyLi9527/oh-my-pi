@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added credential-free DuckDuckGo and explicit Bing support to the minimal headless search runtime.
+
 ## [17.2.1] - 2026-07-30
 
 ### Added

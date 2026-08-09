@@ -20,7 +20,16 @@ afterEach(() => {
 
 describe("headless search runtime", () => {
 	it("exports only the approved provider runtime surface", () => {
-		expect(SEARCH_PROVIDER_ORDER).toEqual(["parallel", "brave", "exa", "zhipu", "tavily", "firecrawl"]);
+		expect(SEARCH_PROVIDER_ORDER).toEqual([
+			"parallel",
+			"brave",
+			"exa",
+			"zhipu",
+			"tavily",
+			"firecrawl",
+			"duckduckgo",
+			"bing",
+		]);
 		expect(typeof runSearchQuery).toBe("function");
 		expect(typeof setSearchProviderOrder).toBe("function");
 		expect(typeof setExcludedSearchProviders).toBe("function");

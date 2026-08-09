@@ -1,7 +1,9 @@
 import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import type { ModelRegistry } from "../../config/model-registry";
 import type { SearchProvider } from "./providers/base";
+import { BingProvider } from "./providers/bing";
 import { BraveProvider } from "./providers/brave";
+import { DuckDuckGoProvider } from "./providers/duckduckgo";
 import { HeadlessExaProvider } from "./providers/exa-headless";
 import { FirecrawlProvider } from "./providers/firecrawl";
 import { ParallelProvider } from "./providers/parallel";
@@ -15,7 +17,16 @@ import {
 } from "./runtime-core";
 import { SEARCH_PROVIDER_LABELS, SearchProviderError, type SearchProviderId } from "./types";
 
-export const SEARCH_PROVIDER_ORDER = ["parallel", "brave", "exa", "zhipu", "tavily", "firecrawl"] as const;
+export const SEARCH_PROVIDER_ORDER = [
+	"parallel",
+	"brave",
+	"exa",
+	"zhipu",
+	"tavily",
+	"firecrawl",
+	"duckduckgo",
+	"bing",
+] as const;
 type HeadlessSearchProviderId = (typeof SEARCH_PROVIDER_ORDER)[number];
 
 const isHeadlessProvider = (id: SearchProviderId): id is HeadlessSearchProviderId =>
@@ -28,6 +39,8 @@ const providerFactories: Record<HeadlessSearchProviderId, () => SearchProvider> 
 	zhipu: () => new ZhipuProvider(),
 	tavily: () => new TavilyProvider(),
 	firecrawl: () => new FirecrawlProvider(),
+	duckduckgo: () => new DuckDuckGoProvider(),
+	bing: () => new BingProvider(),
 };
 const providerInstances = new Map<HeadlessSearchProviderId, SearchProvider>();
 let orderedProviders: readonly HeadlessSearchProviderId[] = SEARCH_PROVIDER_ORDER;

@@ -64,6 +64,11 @@ export const SEARCH_PROVIDER_OPTIONS = [
 		description: "Credential-free best-effort fallback; may be bot-challenged on datacenter/shared-egress IPs",
 	},
 	{
+		value: "bing",
+		label: "Bing",
+		description: "Credential-free explicit search; may return a bot-detection challenge",
+	},
+	{
 		value: "ecosia",
 		label: "Ecosia",
 		description: "Credential-free browser-backed scrape of Ecosia (Google-backed) results",
