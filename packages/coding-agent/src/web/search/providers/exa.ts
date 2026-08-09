@@ -6,17 +6,20 @@
  * Requests per-result summaries via `contents.summary` and synthesizes
  * them into a combined `answer` string on the SearchResponse.
  */
-import { type ApiKey, type AuthStorage, type FetchImpl, getEnvApiKey, withAuth } from "@oh-my-pi/pi-ai";
+
+import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
+import type { FetchImpl } from "@oh-my-pi/pi-ai/types";
 import { getDefault, settings } from "../../../config/settings";
 import { findApiKey, isSearchResponse } from "../../../exa/mcp-client";
 import { parseSSE } from "../../../mcp/json-rpc";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
+import { type ApiKey, withAuth } from "../provider-auth";
 import { formatQuery, parseSearchQuery, type StructuredQuery } from "../query";
 import { dateToAgeSeconds } from "../utils";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { classifyProviderHttpError, withHardTimeout } from "./utils";
+import { classifyProviderHttpError, getSearchProviderEnvApiKey, withHardTimeout } from "./utils";
 
 const EXA_API_URL = "https://api.exa.ai/search";
 const DEFAULT_EXA_SEARCH_DELAY_MS = getDefault("exa.searchDelayMs");
@@ -404,7 +407,7 @@ export async function searchExa(params: ExaSearchParams): Promise<SearchResponse
 	const keyOrResolver: ApiKey | undefined =
 		storedKey && params.authStorage
 			? params.authStorage.resolver("exa", { sessionId: params.sessionId })
-			: getEnvApiKey("exa");
+			: getSearchProviderEnvApiKey("exa");
 	const response = keyOrResolver
 		? await withAuth(keyOrResolver, key => callExaSearch(key, params), { signal: params.signal })
 		: await callExaMcpSearch(params);
@@ -447,7 +450,7 @@ export class ExaProvider extends SearchProvider {
 
 	isAvailable(authStorage: AuthStorage): boolean {
 		if (!this.#settingsAllowSearch()) return false;
-		return !!getEnvApiKey("exa") || authStorage.hasAuth("exa");
+		return !!getSearchProviderEnvApiKey("exa") || authStorage.hasAuth("exa");
 	}
 
 	/**

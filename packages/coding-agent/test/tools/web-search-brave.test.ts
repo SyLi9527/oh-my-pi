@@ -1,6 +1,13 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import { searchBrave } from "@oh-my-pi/pi-coding-agent/web/search/providers/brave";
+
+const ambientBraveApiKey = process.env.BRAVE_API_KEY;
+
+afterEach(() => {
+	if (ambientBraveApiKey === undefined) delete process.env.BRAVE_API_KEY;
+	else process.env.BRAVE_API_KEY = ambientBraveApiKey;
+});
 
 function makeAuthStorage(overrides: Record<string, string | undefined>): AuthStorage {
 	return {

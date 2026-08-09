@@ -4,14 +4,17 @@
  * Uses Tavily's agent-focused search API to return structured results with an
  * optional synthesized answer.
  */
-import { type ApiKey, type AuthStorage, type FetchImpl, getEnvApiKey, withAuth } from "@oh-my-pi/pi-ai";
+
+import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
+import type { FetchImpl } from "@oh-my-pi/pi-ai/types";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
+import { type ApiKey, withAuth } from "../provider-auth";
 import { formatQuery, parseSearchQuery } from "../query";
 import { clampNumResults, dateToAgeSeconds } from "../utils";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { classifyProviderHttpError, withHardTimeout } from "./utils";
+import { classifyProviderHttpError, getSearchProviderEnvApiKey, withHardTimeout } from "./utils";
 
 const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 const DEFAULT_NUM_RESULTS = 5;
@@ -233,7 +236,7 @@ export class TavilyProvider extends SearchProvider {
 	readonly label = "Tavily";
 
 	isAvailable(authStorage: AuthStorage): boolean {
-		return authStorage.hasAuth("tavily") || !!getEnvApiKey("tavily");
+		return authStorage.hasAuth("tavily") || !!getSearchProviderEnvApiKey("tavily");
 	}
 
 	search(params: SearchParams): Promise<SearchResponse> {

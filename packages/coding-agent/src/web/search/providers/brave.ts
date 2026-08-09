@@ -4,15 +4,18 @@
  * Calls Brave's web search REST API and maps results into the unified
  * SearchResponse shape used by the web search tool.
  */
-import { type AuthStorage, type FetchImpl, getEnvApiKey, withAuth } from "@oh-my-pi/pi-ai";
+
+import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
+import type { FetchImpl } from "@oh-my-pi/pi-ai/types";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
+import { withAuth } from "../provider-auth";
 import type { QuerySyntax, StructuredQuery } from "../query";
 import { formatQuery, GOOGLE_QUERY_SYNTAX, parseSearchQuery } from "../query";
 import { clampNumResults, dateToAgeSeconds } from "../utils";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { classifyProviderHttpError, withHardTimeout } from "./utils";
+import { classifyProviderHttpError, getSearchProviderEnvApiKey, withHardTimeout } from "./utils";
 
 const BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search";
 const DEFAULT_NUM_RESULTS = 10;
@@ -177,7 +180,7 @@ export class BraveProvider extends SearchProvider {
 	readonly label = "Brave";
 
 	isAvailable(authStorage: AuthStorage): boolean {
-		return authStorage.hasAuth("brave") || Boolean(getEnvApiKey("brave"));
+		return authStorage.hasAuth("brave") || Boolean(getSearchProviderEnvApiKey("brave"));
 	}
 
 	search(params: SearchParams): Promise<SearchResponse> {

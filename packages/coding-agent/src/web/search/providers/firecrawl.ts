@@ -4,21 +4,17 @@
  * Calls Firecrawl's search API and maps web results into the unified
  * SearchResponse shape used by the web search tool.
  */
-import {
-	type AuthStorage,
-	type FetchImpl,
-	getEnvApiKey,
-	resolveApiKeyOnce,
-	seedApiKeyResolver,
-	withAuth,
-} from "@oh-my-pi/pi-ai";
+
+import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
+import type { FetchImpl } from "@oh-my-pi/pi-ai/types";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
+import { resolveApiKeyOnce, seedApiKeyResolver, withAuth } from "../provider-auth";
 import { formatQuery, GOOGLE_QUERY_SYNTAX, parseSearchQuery, type StructuredQuery } from "../query";
 import { clampNumResults } from "../utils";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { classifyProviderHttpError, withHardTimeout } from "./utils";
+import { classifyProviderHttpError, getSearchProviderEnvApiKey, withHardTimeout } from "./utils";
 
 const FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search";
 const DEFAULT_NUM_RESULTS = 10;
@@ -194,7 +190,7 @@ export class FirecrawlProvider extends SearchProvider {
 	 * doesn't displace other providers that the user has set up with API keys.
 	 */
 	isAvailable(authStorage: AuthStorage): boolean {
-		return authStorage.hasAuth("firecrawl") || !!getEnvApiKey("firecrawl");
+		return authStorage.hasAuth("firecrawl") || !!getSearchProviderEnvApiKey("firecrawl");
 	}
 
 	/**

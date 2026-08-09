@@ -22,7 +22,9 @@ import {
 import { renderStatusLine, renderTreeList, urlHyperlink } from "../../tui";
 import { CachedOutputBlock, markFramedBlockComponent, outputBlockContentWidth } from "../../tui/output-block";
 import { getSearchProviderLabel } from "./provider";
-import type { SearchFailureAttempt, SearchResponse } from "./types";
+import type { SearchRenderDetails } from "./types";
+
+export type { SearchRenderDetails } from "./types";
 
 const MAX_COLLAPSED_ITEMS = PREVIEW_LIMITS.COLLAPSED_ITEMS;
 
@@ -52,12 +54,6 @@ function renderFallbackText(contentText: string, expanded: boolean, theme: Theme
 	}
 
 	return new Text(text, 0, 0);
-}
-
-export interface SearchRenderDetails {
-	response: SearchResponse;
-	error?: string;
-	failures?: readonly SearchFailureAttempt[];
 }
 
 /** Render a web search failure as a framed error panel, matching the success layout. */

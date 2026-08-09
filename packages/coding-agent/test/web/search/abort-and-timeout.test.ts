@@ -29,6 +29,7 @@ import {
 } from "@oh-my-pi/pi-coding-agent/web/search/types";
 
 const FAKE_SESSION = {} as ToolSession;
+const ambientBraveApiKey = process.env.BRAVE_API_KEY;
 const fakeStorage = {
 	listAuthCredentials: () => [],
 	updateAuthCredential: () => undefined,
@@ -139,7 +140,8 @@ describe("Anthropic provider hard-timeout wiring", () => {
 describe("Brave provider hard-timeout wiring", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
-		delete process.env.BRAVE_API_KEY;
+		if (ambientBraveApiKey === undefined) delete process.env.BRAVE_API_KEY;
+		else process.env.BRAVE_API_KEY = ambientBraveApiKey;
 	});
 
 	it("hands fetch a composed signal even with no caller signal — confirms the rollout reaches non-Anthropic providers", async () => {
@@ -218,14 +220,12 @@ describe("executeSearch abort propagation", () => {
 		const ac = new AbortController();
 		const fallbackSearch = vi.fn();
 		mockProviderChain([
-			fakeProvider(
-				"parallel",
-				({ signal }) =>
-					new Promise((_resolve, reject) => {
-						signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
-						ac.abort(new Error("caller cancelled"));
-					}),
-			),
+			fakeProvider("parallel", ({ signal }) => {
+				const { promise, reject } = Promise.withResolvers<SearchResponse>();
+				signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+				ac.abort(new Error("caller cancelled"));
+				return promise;
+			}),
 			fakeProvider("brave", fallbackSearch),
 		]);
 
@@ -247,9 +247,9 @@ describe("executeSearch abort propagation", () => {
 						sources: [{ title: "Unbounded result", url: "https://example.com/unbounded" }],
 					};
 				}
-				return new Promise((_resolve, reject) => {
-					signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-				});
+				const { promise, reject } = Promise.withResolvers<SearchResponse>();
+				signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+				return promise;
 			}),
 			fakeProvider("brave", async () => ({
 				provider: "brave",
@@ -335,13 +335,11 @@ describe("executeSearch abort propagation", () => {
 
 	it("records an attempt timeout with a stable sanitized message when every provider times out", async () => {
 		mockProviderChain([
-			fakeProvider(
-				"parallel",
-				({ signal }) =>
-					new Promise((_resolve, reject) =>
-						signal?.addEventListener("abort", () => reject(signal.reason), { once: true }),
-					),
-			),
+			fakeProvider("parallel", ({ signal }) => {
+				const { promise, reject } = Promise.withResolvers<SearchResponse>();
+				signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+				return promise;
+			}),
 		]);
 
 		const result = await runSearchQuery(
@@ -356,17 +354,15 @@ describe("executeSearch abort propagation", () => {
 
 	it("uses the attempt signal to classify a wrapped timeout error", async () => {
 		mockProviderChain([
-			fakeProvider(
-				"parallel",
-				({ signal }) =>
-					new Promise((_resolve, reject) =>
-						signal?.addEventListener(
-							"abort",
-							() => reject(new DOMException("provider wrapped the timeout", "AbortError")),
-							{ once: true },
-						),
-					),
-			),
+			fakeProvider("parallel", ({ signal }) => {
+				const { promise, reject } = Promise.withResolvers<SearchResponse>();
+				signal?.addEventListener(
+					"abort",
+					() => reject(new DOMException("provider wrapped the timeout", "AbortError")),
+					{ once: true },
+				);
+				return promise;
+			}),
 		]);
 
 		const result = await runSearchQuery(

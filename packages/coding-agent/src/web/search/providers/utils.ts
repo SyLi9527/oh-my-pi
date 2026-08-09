@@ -2,6 +2,21 @@ import type { AgentStorage } from "../../../session/agent-storage";
 import { SearchProviderError, type SearchProviderId, type SearchSource } from "../../../web/search/types";
 import { dateToAgeSeconds } from "../utils";
 
+const SEARCH_PROVIDER_ENV_KEYS = {
+	parallel: "PARALLEL_API_KEY",
+	brave: "BRAVE_API_KEY",
+	exa: "EXA_API_KEY",
+	zhipu: "ZHIPU_API_KEY",
+	tavily: "TAVILY_API_KEY",
+	firecrawl: "FIRECRAWL_API_KEY",
+} as const;
+
+/** Lean env fallback for the provider-only runtime; OMP startup has already loaded dotenv values into Bun.env. */
+export function getSearchProviderEnvApiKey(provider: keyof typeof SEARCH_PROVIDER_ENV_KEYS): string | undefined {
+	const value = process.env[SEARCH_PROVIDER_ENV_KEYS[provider]]?.trim();
+	return value ? value : undefined;
+}
+
 /**
  * Search for an API credential by checking an env-derived key first,
  * then falling back to agent.db stored credentials for the given providers.

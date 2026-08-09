@@ -186,6 +186,13 @@ export interface SearchFailureAttempt {
 	status?: number;
 }
 
+/** Provider response plus compatibility and structured failure metadata. */
+export interface SearchRenderDetails {
+	response: SearchResponse;
+	error?: string;
+	failures?: readonly SearchFailureAttempt[];
+}
+
 /** Provider-specific error with optional HTTP status and classification. */
 export class SearchProviderError extends Error {
 	constructor(

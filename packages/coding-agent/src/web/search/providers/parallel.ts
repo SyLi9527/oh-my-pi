@@ -1,4 +1,5 @@
-import { type ApiKey, type AuthStorage, type FetchImpl, getEnvApiKey, withAuth } from "@oh-my-pi/pi-ai";
+import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
+import type { FetchImpl } from "@oh-my-pi/pi-ai/types";
 import type { SearchResponse } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
 import {
@@ -9,11 +10,12 @@ import {
 	parseParallelErrorResponse,
 	parseParallelSearchPayload,
 } from "../../parallel";
+import { type ApiKey, withAuth } from "../provider-auth";
 import { formatQuery, parseSearchQuery, type StructuredQuery } from "../query";
 import { clampNumResults } from "../utils";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { classifyProviderHttpError, toSearchSources, withHardTimeout } from "./utils";
+import { classifyProviderHttpError, getSearchProviderEnvApiKey, toSearchSources, withHardTimeout } from "./utils";
 
 const DEFAULT_NUM_RESULTS = 10;
 const MAX_NUM_RESULTS = 40;
@@ -163,7 +165,7 @@ export class ParallelProvider extends SearchProvider {
 	readonly label = "Parallel";
 
 	isAvailable(authStorage: AuthStorage) {
-		return !!getEnvApiKey("parallel") || authStorage.hasAuth("parallel");
+		return !!getSearchProviderEnvApiKey("parallel") || authStorage.hasAuth("parallel");
 	}
 
 	search(params: SearchParams): Promise<SearchResponse> {

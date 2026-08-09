@@ -1,12 +1,14 @@
 /** Zhipu's structured web search API provider. */
-import { type ApiKey, type AuthStorage, getEnvApiKey, withAuth } from "@oh-my-pi/pi-ai";
+
+import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
+import { type ApiKey, withAuth } from "../provider-auth";
 import { formatQuery, parseSearchQuery } from "../query";
 import { clampNumResults } from "../utils";
 import type { SearchParams } from "./base";
 import { SearchProvider } from "./base";
-import { classifyProviderHttpError, withHardTimeout } from "./utils";
+import { classifyProviderHttpError, getSearchProviderEnvApiKey, withHardTimeout } from "./utils";
 
 const ZHIPU_SEARCH_URL = "https://open.bigmodel.cn/api/paas/v4/web_search";
 const RECENCY = { day: "oneDay", week: "oneWeek", month: "oneMonth", year: "oneYear" } as const;
@@ -118,7 +120,7 @@ export class ZhipuProvider extends SearchProvider {
 	readonly label = "Zhipu Web Search";
 
 	isAvailable(authStorage: AuthStorage): boolean {
-		return authStorage.hasAuth("zhipu") || !!getEnvApiKey("zhipu");
+		return authStorage.hasAuth("zhipu") || !!getSearchProviderEnvApiKey("zhipu");
 	}
 
 	search(params: SearchParams): Promise<SearchResponse> {
