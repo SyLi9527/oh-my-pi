@@ -157,7 +157,6 @@ export class SessionProviderBoundary {
 			loopGuard: {
 				enabled: this.#host.settings.get("model.loopGuard.enabled"),
 				checkAssistantContent: this.#host.settings.get("model.loopGuard.checkAssistantContent"),
-				checkDeepseekThinking: this.#host.settings.get("model.loopGuard.checkDeepseekThinking"),
 				...options.loopGuard,
 			},
 		};

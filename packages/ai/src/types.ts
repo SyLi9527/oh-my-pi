@@ -442,9 +442,6 @@ export interface StreamOptions {
 	loopGuard?: {
 		enabled?: boolean;
 		checkAssistantContent?: boolean;
-		/** Opt back into loop guarding for DeepSeek models, which are not
-		 *  guarded by default (see isLoopGuardedModel). */
-		checkDeepseekThinking?: boolean;
 	};
 	/**
 	 * Advisory token budget for a full agentic loop. Anthropic encodes this as

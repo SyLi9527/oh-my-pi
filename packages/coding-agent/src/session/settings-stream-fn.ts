@@ -65,7 +65,6 @@ export function createSettingsAwareStreamFn(settings: Settings, base: StreamFn =
 			loopGuard: {
 				enabled: settings.get("model.loopGuard.enabled"),
 				checkAssistantContent: settings.get("model.loopGuard.checkAssistantContent"),
-				checkDeepseekThinking: settings.get("model.loopGuard.checkDeepseekThinking"),
 				...streamOptions?.loopGuard,
 			},
 			hideThinkingSummary: streamOptions?.hideThinkingSummary ?? settings.get("omitThinking"),
