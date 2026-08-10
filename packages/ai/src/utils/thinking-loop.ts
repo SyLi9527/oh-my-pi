@@ -127,7 +127,19 @@ export function isGeminiThinkingModel(model: Model<Api>): boolean {
 export function isLoopGuardedModel(model: Model<Api>, options?: StreamOptions): boolean {
 	if (options?.loopGuard?.enabled === false) return false;
 	const isDeepseek = /deepseek/i.test(`${model.provider}/${model.id}`);
-	return isGeminiThinkingModel(model) || isDeepseek;
+	if (isDeepseek) {
+		// DeepSeek reasoning is NOT guarded by default. The near-duplicate
+		// detector was calibrated on Gemini thinking transcripts (13.5k
+		// non-loop blocks, zero false positives) and is unvalidated on
+		// DeepSeek's much more repetitive reasoning — it miskills healthy
+		// reasoning that re-states near-identical paragraphs as a thinking
+		// loop, burning minutes of silent retries (ResearchBuddy runs,
+		// 2026-08-11: "原样输出" + deepseek-v4 thinking, two consecutive
+		// Thinking-loop aborts at 66-91s). Opt back in explicitly with
+		// loopGuard.checkDeepseekThinking.
+		return options?.loopGuard?.checkDeepseekThinking === true;
+	}
+	return isGeminiThinkingModel(model);
 }
 
 /** @deprecated Use isLoopGuardedModel instead. */

@@ -486,18 +486,25 @@ describe("withGeminiThinkingLoopGuard (Vertex transport)", () => {
 	});
 });
 describe("isLoopGuardedModel", () => {
-	test("guards Gemini and DeepSeek models by default, respects overrides", () => {
+	test("guards Gemini by default; DeepSeek only when opted in; respects overrides", () => {
 		const gemini = createMockModel({ provider: "openrouter", id: "google/gemini-3.5-flash" }).model;
 		const deepseek = createMockModel({ provider: "deepseek", id: "deepseek-reasoner" }).model;
 		const other = createMockModel({ provider: "openai", id: "gpt-4o" }).model;
 
 		expect(isLoopGuardedModel(gemini)).toBe(true);
-		expect(isLoopGuardedModel(deepseek)).toBe(true);
+		// DeepSeek reasoning is NOT guarded by default: the near-duplicate
+		// detector was calibrated on Gemini thinking transcripts and is
+		// unvalidated on DeepSeek's more repetitive reasoning, which it
+		// miskills as a loop (see isLoopGuardedModel).
+		expect(isLoopGuardedModel(deepseek)).toBe(false);
 		expect(isLoopGuardedModel(other)).toBe(false);
+
+		// DeepSeek opts back in explicitly
+		expect(isLoopGuardedModel(deepseek, { loopGuard: { checkDeepseekThinking: true } })).toBe(true);
 
 		// enabled: false disables even for target models
 		expect(isLoopGuardedModel(gemini, { loopGuard: { enabled: false } })).toBe(false);
-		expect(isLoopGuardedModel(deepseek, { loopGuard: { enabled: false } })).toBe(false);
+		expect(isLoopGuardedModel(deepseek, { loopGuard: { checkDeepseekThinking: true, enabled: false } })).toBe(false);
 
 		// force enabled for other models — but disabled overall unless it is Gemini/DeepSeek
 		expect(isLoopGuardedModel(other, { loopGuard: { enabled: true } })).toBe(false);
@@ -512,7 +519,8 @@ describe("loop guard assistant prose/text loops", () => {
 			id: "deepseek-reasoner",
 		} as unknown as Model<Api>;
 		const partial = { role: "assistant", content: [], stopReason: "stop" } as unknown as AssistantMessage;
-		const options = { loopGuard: { checkAssistantContent: true } };
+		// DeepSeek must opt in to loop guarding before the text channel applies.
+		const options = { loopGuard: { checkDeepseekThinking: true, checkAssistantContent: true } };
 
 		const guarded = withGeminiThinkingLoopGuard(model, options, () => {
 			const inner = new AssistantMessageEventStream();
@@ -546,7 +554,8 @@ describe("loop guard assistant prose/text loops", () => {
 			id: "deepseek-reasoner",
 		} as unknown as Model<Api>;
 		const partial = { role: "assistant", content: [], stopReason: "stop" } as unknown as AssistantMessage;
-		const options = { loopGuard: { checkAssistantContent: false } };
+		// DeepSeek opted in, but the text channel is off — the prose must pass.
+		const options = { loopGuard: { checkDeepseekThinking: true, checkAssistantContent: false } };
 
 		const guarded = withGeminiThinkingLoopGuard(model, options, () => {
 			const inner = new AssistantMessageEventStream();
@@ -661,8 +670,10 @@ describe("isGeminiThinkingModel", () => {
 		expect(isGeminiThinkingModel(gemini)).toBe(true);
 		expect(isGeminiThinkingModel(deepseek)).toBe(false);
 		expect(isGeminiThinkingModel(claude)).toBe(false);
-		// DeepSeek is still loop-guarded for the similarity guard, just not the header guard.
-		expect(isLoopGuardedModel(deepseek)).toBe(true);
+		// DeepSeek is only loop-guarded when explicitly opted in (similarity
+		// guard is unvalidated on DeepSeek reasoning); Gemini stays guarded.
+		expect(isLoopGuardedModel(deepseek)).toBe(false);
+		expect(isLoopGuardedModel(deepseek, { loopGuard: { checkDeepseekThinking: true } })).toBe(true);
 		expect(isLoopGuardedModel(gemini)).toBe(true);
 	});
 });

@@ -1157,6 +1157,18 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"model.loopGuard.checkDeepseekThinking": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "model",
+			group: "Thinking",
+			label: "Loop Guard DeepSeek Reasoning",
+			description:
+				"Opt into automatic loop detection for DeepSeek reasoning streams (off by default: the detector is calibrated on Gemini thinking and miskills repetitive but healthy DeepSeek reasoning)",
+		},
+	},
+
 	"model.toolCallLoopGuard.enabled": {
 		type: "boolean",
 		default: true,
