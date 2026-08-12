@@ -18,6 +18,7 @@ import type {
 	SimpleStreamOptions,
 	ToolChoice,
 } from "@oh-my-pi/pi-ai";
+import type { StrictWorkspaceMentionReader } from "@oh-my-pi/pi-natives";
 import type { postmortem } from "@oh-my-pi/pi-utils";
 import type { AdvisorConfig } from "../advisor";
 import type { AsyncJob, AsyncJobDeliveryState, AsyncJobManager } from "../async";
@@ -108,6 +109,8 @@ export interface AgentSessionConfig {
 	agent: Agent;
 	sessionManager: SessionManager;
 	settings: Settings;
+	/** Identity-verified, handle-bound reader for strict workspace mentions. */
+	strictWorkspaceMentionReader?: StrictWorkspaceMentionReader;
 	/** Whether the caller explicitly requested yolo/auto-approve behavior for this session. */
 	autoApprove?: boolean;
 	/** Models to cycle through with Ctrl+P (from --models flag). */

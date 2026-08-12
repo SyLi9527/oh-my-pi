@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { extractFileMentions, generateFileMentionMessages } from "@oh-my-pi/pi-coding-agent/utils/file-mentions";
+import { readWorkspaceMentionRootIdentity, StrictWorkspaceMentionReader } from "@oh-my-pi/pi-natives";
 import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 const tempDirs: string[] = [];
@@ -20,6 +21,27 @@ async function createTempDir(): Promise<string> {
 }
 
 describe("generateFileMentionMessages path resolution", () => {
+	test("uses a strict native reader without ambient path fallback", async () => {
+		const cwd = await createTempDir();
+		const outside = await createTempDir();
+		await Bun.write(path.join(cwd, "safe.txt"), "inside");
+		await Bun.write(path.join(outside, "secret.txt"), "outside-secret");
+		const reader = new StrictWorkspaceMentionReader(cwd, readWorkspaceMentionRootIdentity(cwd));
+		await fs.unlink(path.join(cwd, "safe.txt"));
+		await fs.symlink(
+			path.join(outside, "secret.txt"),
+			path.join(cwd, "safe.txt"),
+			process.platform === "win32" ? "file" : undefined,
+		);
+
+		try {
+			const messages = await generateFileMentionMessages(["safe.txt"], cwd, { strictReader: reader });
+			expect(JSON.stringify(messages)).not.toContain("outside-secret");
+		} finally {
+			reader.dispose();
+		}
+	});
+
 	test("auto-reads an exact file path", async () => {
 		const cwd = await createTempDir();
 		await fs.mkdir(path.join(cwd, "src"), { recursive: true });

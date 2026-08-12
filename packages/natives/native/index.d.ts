@@ -201,6 +201,12 @@ export declare class Shell {
   liveBackgroundJobCount(): Promise<number>
 }
 
+export declare class StrictWorkspaceMentionReader {
+  constructor(workspaceRoot: string, expectedIdentity: WorkspaceRootIdentity)
+  read(relativePath: string): WorkspaceMentionReadResult
+  dispose(): boolean
+}
+
 /**
  * Install the bounded Tokio runtime napi-rs adopts for async exports and the
  * bounded Rayon global pool used by native parallel iterators.
@@ -1611,6 +1617,8 @@ export interface PtyStartOptions {
  */
 export declare function readImageFromClipboard(): Promise<ClipboardImage | undefined | null>
 
+export declare function readWorkspaceMentionRootIdentity(workspaceRoot: string): WorkspaceRootIdentity
+
 /**
  * Render one snapcompact frame on a libuv worker: print pre-normalized text
  * onto a `size`-wide bitmap and encode it as PNG.
@@ -1934,6 +1942,27 @@ export interface WorkProfile {
   totalMs: number
   /** Number of samples collected. */
   sampleCount: number
+}
+
+export interface WorkspaceMentionDirectoryEntry {
+  name: string
+  isDirectory: boolean
+  modifiedAtMs?: number
+}
+
+export interface WorkspaceMentionReadResult {
+  kind: string
+  data?: Buffer
+  entries?: Array<WorkspaceMentionDirectoryEntry>
+  byteSize?: number
+  reason?: string
+  entryLimitReached?: boolean
+}
+
+export interface WorkspaceRootIdentity {
+  platform: string
+  volumeId: string
+  fileId: string
 }
 
 /**

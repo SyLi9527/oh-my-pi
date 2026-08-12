@@ -10,7 +10,15 @@ import path from "node:path";
 import { formatHashlineHeader, formatNumberedLines, type SnapshotStore } from "@oh-my-pi/hashline";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import { formatAge, formatBytes, isProbablyBinary, readImageMetadata } from "@oh-my-pi/pi-utils";
+import type { StrictWorkspaceMentionReader, WorkspaceMentionDirectoryEntry } from "@oh-my-pi/pi-natives";
+import {
+	formatAge,
+	formatBytes,
+	isProbablyBinary,
+	isProbablyBinaryHeader,
+	parseImageMetadata,
+	readImageMetadata,
+} from "@oh-my-pi/pi-utils";
 import { canonicalSnapshotKey } from "../edit/file-snapshot-store";
 import { normalizeToLF } from "../edit/normalize";
 import type { FileMentionMessage } from "../session/messages";
@@ -159,6 +167,113 @@ async function buildDirectoryListing(absolutePath: string): Promise<{ output: st
 	return { output, lineCount: output.split("\n").length };
 }
 
+function buildStrictDirectoryListing(
+	entries: WorkspaceMentionDirectoryEntry[],
+	entryLimitReached: boolean,
+): { output: string; lineCount: number } {
+	const results = entries.map(entry => {
+		const suffix = entry.isDirectory ? "/" : "";
+		const ageSeconds =
+			entry.modifiedAtMs === undefined
+				? undefined
+				: Math.max(0, Math.floor((Date.now() - entry.modifiedAtMs) / 1000));
+		const age = ageSeconds === undefined ? "" : formatAge(ageSeconds);
+		return age ? `${entry.name}${suffix} (${age})` : `${entry.name}${suffix}`;
+	});
+	if (results.length === 0) {
+		return { output: "(empty directory)", lineCount: 1 };
+	}
+
+	const rawOutput = results.join("\n");
+	const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+	let output = truncation.content;
+	const notices: string[] = [];
+	if (entryLimitReached) {
+		notices.push(`${DEFAULT_DIR_LIMIT} entries limit reached. Use limit=${DEFAULT_DIR_LIMIT * 2} for more`);
+	}
+	if (truncation.truncated) {
+		notices.push(`${formatBytes(DEFAULT_MAX_BYTES)} limit reached`);
+	}
+	if (notices.length > 0) {
+		output += `\n\n[${notices.join(". ")}]`;
+	}
+	return { output, lineCount: output.split("\n").length };
+}
+
+async function appendStrictMention(
+	files: FileMentionMessage["files"],
+	filePath: string,
+	reader: StrictWorkspaceMentionReader,
+	options: { autoResizeImages: boolean; useHashLines?: boolean; snapshotStore?: SnapshotStore },
+	cwd: string,
+): Promise<void> {
+	const nativePath = filePath.endsWith("/") ? filePath.slice(0, -1) : filePath;
+	const materialized = reader.read(nativePath);
+	if (materialized.kind === "skipped") {
+		if (materialized.reason === "missing") return;
+		if (materialized.reason === "tooLarge") {
+			const byteSize = materialized.byteSize ?? MAX_AUTO_READ_IMAGE_BYTES + 1;
+			files.push({
+				path: filePath,
+				content: `(skipped auto-read: too large, ${formatBytes(byteSize)})`,
+				byteSize,
+				skippedReason: "tooLarge",
+			});
+			return;
+		}
+		const reason = materialized.reason === "unsafeSymlink" ? "unsafe workspace path" : "workspace path unavailable";
+		files.push({ path: filePath, content: `(skipped auto-read: ${reason})` });
+		return;
+	}
+
+	if (materialized.kind === "directory") {
+		const listing = buildStrictDirectoryListing(materialized.entries ?? [], materialized.entryLimitReached ?? false);
+		files.push({ path: filePath, content: listing.output, lineCount: listing.lineCount });
+		return;
+	}
+
+	const buffer = materialized.data;
+	if (!buffer || buffer.length === 0) return;
+	const imageMetadata = parseImageMetadata(buffer.subarray(0, 256 * 1024));
+	const mimeType = imageMetadata?.mimeType;
+	if (mimeType) {
+		const base64Content = buffer.toBase64();
+		let image: ImageContent = { type: "image", mimeType, data: base64Content };
+		let dimensionNote: string | undefined;
+		if (options.autoResizeImages) {
+			try {
+				const resized = await resizeImage({ type: "image", data: base64Content, mimeType });
+				dimensionNote = formatDimensionNote(resized);
+				image = { type: "image", mimeType: resized.mimeType, data: resized.data };
+			} catch {
+				image = { type: "image", mimeType, data: base64Content };
+			}
+		}
+		files.push({ path: filePath, content: dimensionNote ?? "", image });
+		return;
+	}
+
+	if (isProbablyBinaryHeader(buffer.subarray(0, 8192))) {
+		files.push({
+			path: filePath,
+			content: `(skipped auto-read: binary file, ${formatBytes(buffer.length)})`,
+			byteSize: buffer.length,
+			skippedReason: "binary",
+		});
+		return;
+	}
+
+	const content = buffer.toString("utf8");
+	const snapshotStore = options.useHashLines ? options.snapshotStore : undefined;
+	const normalized = snapshotStore ? normalizeToLF(content) : content;
+	let { output, lineCount } = buildTextOutput(normalized);
+	if (snapshotStore) {
+		const tag = snapshotStore.record(canonicalSnapshotKey(resolveReadPath(filePath, cwd)), normalized);
+		output = `${formatHashlineHeader(filePath, tag)}\n${formatNumberedLines(output)}`;
+	}
+	files.push({ path: filePath, content: output, lineCount });
+}
+
 /** Extract all @filepath mentions from text */
 export function extractFileMentions(text: string): string[] {
 	const matches = [...text.matchAll(FILE_MENTION_REGEX)];
@@ -187,7 +302,12 @@ export function extractFileMentions(text: string): string[] {
 export async function generateFileMentionMessages(
 	filePaths: string[],
 	cwd: string,
-	options?: { autoResizeImages?: boolean; useHashLines?: boolean; snapshotStore?: SnapshotStore },
+	options?: {
+		autoResizeImages?: boolean;
+		useHashLines?: boolean;
+		snapshotStore?: SnapshotStore;
+		strictReader?: StrictWorkspaceMentionReader;
+	},
 ): Promise<AgentMessage[]> {
 	if (filePaths.length === 0) return [];
 
@@ -196,6 +316,20 @@ export async function generateFileMentionMessages(
 	const files: FileMentionMessage["files"] = [];
 
 	for (const filePath of filePaths) {
+		if (options?.strictReader) {
+			await appendStrictMention(
+				files,
+				filePath,
+				options.strictReader,
+				{
+					autoResizeImages,
+					useHashLines: options.useHashLines,
+					snapshotStore: options.snapshotStore,
+				},
+				cwd,
+			);
+			continue;
+		}
 		const resolvedPath = await resolveMentionPath(filePath, cwd);
 		if (!resolvedPath) {
 			continue;

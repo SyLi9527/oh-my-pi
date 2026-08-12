@@ -79,7 +79,7 @@ import * as AIError from "@oh-my-pi/pi-ai/error";
 import { resetOpenAICodexHistoryAfterCompaction } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
-import { MacOSPowerAssertion } from "@oh-my-pi/pi-natives";
+import { MacOSPowerAssertion, type StrictWorkspaceMentionReader } from "@oh-my-pi/pi-natives";
 import {
 	escapeXmlText,
 	formatDuration,
@@ -414,6 +414,7 @@ export class AgentSession {
 	editClipboard?: Clipboard;
 
 	#powerAssertion: MacOSPowerAssertion | undefined;
+	#strictWorkspaceMentionReader: StrictWorkspaceMentionReader | undefined;
 
 	readonly configWarnings: string[] = [];
 
@@ -833,6 +834,7 @@ export class AgentSession {
 		this.agent = config.agent;
 		this.sessionManager = config.sessionManager;
 		this.settings = config.settings;
+		this.#strictWorkspaceMentionReader = config.strictWorkspaceMentionReader;
 		this.#modelRegistry = config.modelRegistry;
 		const bashHost: BashRunnerHost = {
 			agent: this.agent,
@@ -3607,6 +3609,8 @@ export class AgentSession {
 		this.abortCompaction();
 		const postPromptDrain = this.#cancelPostPromptTasks();
 		this.agent.abort();
+		this.#strictWorkspaceMentionReader?.dispose();
+		this.#strictWorkspaceMentionReader = undefined;
 		try {
 			await withTimeout(postPromptDrain, 5_000, "Timed out draining post-prompt tasks during dispose");
 		} catch (error) {
@@ -5037,6 +5041,7 @@ export class AgentSession {
 					autoResizeImages: this.settings.get("images.autoResize"),
 					useHashLines: resolveFileDisplayMode(this).hashLines,
 					snapshotStore: getFileSnapshotStore(this),
+					strictReader: this.#strictWorkspaceMentionReader,
 				});
 				for (const fileMentionMessage of fileMentionMessages) {
 					messages.push(await this.#normalizeAgentMessageImages(fileMentionMessage));

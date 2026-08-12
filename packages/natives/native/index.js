@@ -25,6 +25,7 @@ export const MacOSPowerAssertion = nativeBindings.MacOSPowerAssertion;
 export const Process = nativeBindings.Process;
 export const PtySession = nativeBindings.PtySession;
 export const Shell = nativeBindings.Shell;
+export const StrictWorkspaceMentionReader = nativeBindings.StrictWorkspaceMentionReader;
 
 // functions
 export const __ompInstallTokioRuntime = nativeBindings.__ompInstallTokioRuntime;
@@ -69,6 +70,7 @@ export const mmrRerankIndices = nativeBindings.mmrRerankIndices;
 export const parseKey = nativeBindings.parseKey;
 export const parseKittySequence = nativeBindings.parseKittySequence;
 export const readImageFromClipboard = nativeBindings.readImageFromClipboard;
+export const readWorkspaceMentionRootIdentity = nativeBindings.readWorkspaceMentionRootIdentity;
 export const renderSnapcompactPng = nativeBindings.renderSnapcompactPng;
 export const search = nativeBindings.search;
 export const setHangulCompatJamoWidthOverride = nativeBindings.setHangulCompatJamoWidthOverride;

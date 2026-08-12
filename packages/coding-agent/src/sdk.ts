@@ -26,6 +26,7 @@ import {
 	prewarmOpenAICodexResponses,
 } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
 import { FALLBACK_DIALECT, preferredDialect } from "@oh-my-pi/pi-catalog/identity";
+import { StrictWorkspaceMentionReader } from "@oh-my-pi/pi-natives";
 import type { Component } from "@oh-my-pi/pi-tui";
 import { $env, $flag, getAgentDir, getProjectDir, logger, postmortem, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
@@ -338,9 +339,25 @@ function applyMCPEnvironment(result: { exaApiKeys: string[] }): void {
 }
 
 // Types
+export interface WorkspaceRootIdentity {
+	readonly platform: "posix" | "windows";
+	readonly volumeId: string;
+	readonly fileId: string;
+}
+
+export type FileMentionReadPolicyInput =
+	| { readonly mode: "ambient" }
+	| {
+			readonly mode: "workspace-strict";
+			readonly workspaceRoot: string;
+			readonly expectedRootIdentity: WorkspaceRootIdentity;
+	  };
+
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: getProjectDir() */
 	cwd?: string;
+	/** Controls automatic @path reads. Existing callers default to ambient filesystem behavior. */
+	fileMentionReadPolicy?: FileMentionReadPolicyInput;
 	/** Additional workspace directories beyond cwd (multi-root), absolute or cwd-relative. */
 	additionalDirectories?: string[];
 	/** Global config directory. Default: ~/.omp/agent */
@@ -1637,6 +1654,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		agentRegistry.unregister(resolvedAgentId, ref);
 	};
 	const evalKernelOwnerId = `agent-session:${Snowflake.next()}`;
+	const fileMentionReadPolicy = options.fileMentionReadPolicy ?? { mode: "ambient" };
+	const strictWorkspaceMentionReader =
+		fileMentionReadPolicy.mode === "workspace-strict"
+			? new StrictWorkspaceMentionReader(
+					fileMentionReadPolicy.workspaceRoot,
+					fileMentionReadPolicy.expectedRootIdentity,
+				)
+			: undefined;
 
 	try {
 		const getActiveModelString = (): string | undefined => {
@@ -3269,6 +3294,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			planYolo: options.planYolo,
 			serviceTierByFamily: initialServiceTierByFamily,
 			sessionManager,
+			strictWorkspaceMentionReader,
 			initialAdvisorCosts,
 			settings,
 			autoApprove: options.autoApprove,
@@ -3704,6 +3730,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				await session.dispose();
 				if (hasRegistered) unregisterUnlessParked();
 			} else {
+				strictWorkspaceMentionReader?.dispose();
 				if (hasRegistered) unregisterUnlessParked();
 				if (asyncJobManager) {
 					if (AsyncJobManager.instance() === asyncJobManager) {

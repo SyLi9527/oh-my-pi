@@ -66,6 +66,7 @@ pub mod tokens;
 pub(crate) mod utils;
 pub mod vectors;
 pub mod workspace;
+pub mod workspace_mentions;
 
 #[cfg(target_os = "windows")]
 use std::sync::{
