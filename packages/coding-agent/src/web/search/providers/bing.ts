@@ -1,5 +1,5 @@
 import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
-import { parseHTML } from "linkedom";
+import { type Element, parseHTML } from "@oh-my-pi/pi-utils/dom";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
 import { clampNumResults } from "../utils";
@@ -72,7 +72,8 @@ function parseHtmlResults(html: string): ParsedResult[] {
 	const results: ParsedResult[] = [];
 	for (const item of document.querySelectorAll("li.b_algo")) {
 		const anchor = item.querySelector("h2 a[href]");
-		const href = anchor?.getAttribute("href");
+		if (!anchor) continue;
+		const href = anchor.getAttribute("href");
 		if (!href) continue;
 		const url = unwrapResultUrl(href);
 		if (!url) continue;
@@ -143,7 +144,7 @@ export class BingProvider extends SearchProvider {
 		return false;
 	}
 
-	isExplicitlyAvailable(_authStorage: AuthStorage): boolean {
+	override isExplicitlyAvailable(_authStorage: AuthStorage): boolean {
 		return true;
 	}
 

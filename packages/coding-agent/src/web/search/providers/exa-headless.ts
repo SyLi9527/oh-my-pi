@@ -96,7 +96,7 @@ export class HeadlessExaProvider extends SearchProvider {
 		return authStorage.hasAuth("exa") || !!getSearchProviderEnvApiKey("exa");
 	}
 
-	isExplicitlyAvailable(authStorage: AuthStorage): boolean {
+	override isExplicitlyAvailable(authStorage: AuthStorage): boolean {
 		return this.isAvailable(authStorage);
 	}
 

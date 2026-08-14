@@ -239,6 +239,7 @@ export async function executeSearchQuery(
 				numSearchResults: params.num_search_results,
 				temperature: params.temperature,
 				signal: attemptSignal,
+				timeoutMs: attemptTimeoutMs,
 				authStorage,
 				modelRegistry,
 				sessionId,

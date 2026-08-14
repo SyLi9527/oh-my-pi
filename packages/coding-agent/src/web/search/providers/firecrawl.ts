@@ -234,7 +234,9 @@ export class FirecrawlProvider extends SearchProvider {
 	 */
 	isAvailable(authStorage: AuthStorage): boolean {
 		const configuredBaseUrl = process.env.FIRECRAWL_BASE_URL ?? process.env.FIRECRAWL_API_URL;
-		return !!configuredBaseUrl?.trim() || authStorage.hasAuth("firecrawl") || !!getSearchProviderEnvApiKey("firecrawl");
+		return (
+			!!configuredBaseUrl?.trim() || authStorage.hasAuth("firecrawl") || !!getSearchProviderEnvApiKey("firecrawl")
+		);
 	}
 
 	/**
