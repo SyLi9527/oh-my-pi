@@ -4,10 +4,11 @@
  * Single tool supporting Anthropic, Perplexity, Exa, Brave, Jina, Kimi, Gemini, Codex, Tavily, Kagi, Z.AI, SearXNG, and Synthetic
  * providers with provider-specific parameters exposed conditionally.
  */
+
+import { type } from "@oh-my-pi/omptype";
 import type { AgentTool, AgentToolContext, AgentToolResult, AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import type { AuthStorage } from "@oh-my-pi/pi-ai";
 import { prompt } from "@oh-my-pi/pi-utils";
-import { type } from "arktype";
 import { ModelRegistry } from "../../config/model-registry";
 import { settings } from "../../config/settings";
 import type { CustomTool, CustomToolContext, RenderResultOptions } from "../../extensibility/custom-tools/types";
@@ -24,7 +25,7 @@ import {
 } from "./provider";
 import { renderSearchCall, renderSearchResult, type SearchRenderDetails } from "./render";
 import { type ExecuteSearchQueryOptions, executeSearchQuery, type ProviderTimeoutPolicy } from "./runtime-core";
-import type { SearchProviderId } from "./types";
+import { DEFAULT_WEB_SEARCH_TIMEOUT_SECONDS, MAX_WEB_SEARCH_TIMEOUT_SECONDS, type SearchProviderId } from "./types";
 
 /** Web search tool parameters schema */
 export const webSearchSchema = type({
@@ -65,9 +66,24 @@ async function executeSearch(
 		geminiModel = undefined;
 	}
 
+	let timeoutMs = DEFAULT_WEB_SEARCH_TIMEOUT_SECONDS * 1_000;
+	try {
+		const configuredSeconds = settings.get("providers.webSearchTimeoutSeconds");
+		if (Number.isFinite(configuredSeconds) && configuredSeconds > 0) {
+			timeoutMs = Math.ceil(Math.min(configuredSeconds, MAX_WEB_SEARCH_TIMEOUT_SECONDS) * 1_000);
+		}
+	} catch {
+		// Preserve the default for one-shot callers that do not initialize Settings.
+	}
+
 	return executeSearchQuery(
 		params,
-		{ ...options, antigravityEndpointMode, geminiModel },
+		{
+			...options,
+			providerTimeoutMs: options.providerTimeoutMs ?? timeoutMs,
+			antigravityEndpointMode,
+			geminiModel,
+		},
 		{
 			getSearchProvider: id => getSearchProvider(id),
 			getSearchProviderLabel: id => getSearchProviderLabel(id),

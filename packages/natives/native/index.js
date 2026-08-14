@@ -19,6 +19,7 @@ const nativeBindings = loadNative();
 export const AudioCapture = nativeBindings.AudioCapture;
 export const AudioPlayback = nativeBindings.AudioPlayback;
 export const DesktopSession = nativeBindings.DesktopSession;
+export const FileLock = nativeBindings.FileLock;
 export const LiveWebRtcPeer = nativeBindings.LiveWebRtcPeer;
 export const MacAppearanceObserver = nativeBindings.MacAppearanceObserver;
 export const MacOSPowerAssertion = nativeBindings.MacOSPowerAssertion;
@@ -29,7 +30,7 @@ export const StrictWorkspaceMentionReader = nativeBindings.StrictWorkspaceMentio
 
 // functions
 export const __ompInstallTokioRuntime = nativeBindings.__ompInstallTokioRuntime;
-export const __piNativesV17_2_1 = nativeBindings.__piNativesV17_2_1;
+export const __piNativesV17_3_3 = nativeBindings.__piNativesV17_3_3;
 export const astEdit = nativeBindings.astEdit;
 export const astGrep = nativeBindings.astGrep;
 export const astMatch = nativeBindings.astMatch;

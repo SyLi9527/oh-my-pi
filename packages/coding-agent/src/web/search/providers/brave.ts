@@ -4,9 +4,7 @@
  * Calls Brave's web search REST API and maps results into the unified
  * SearchResponse shape used by the web search tool.
  */
-
 import type { AuthStorage } from "@oh-my-pi/pi-ai/auth-storage";
-import type { FetchImpl } from "@oh-my-pi/pi-ai/types";
 import type { SearchResponse, SearchSource } from "../../../web/search/types";
 import { SearchProviderError } from "../../../web/search/types";
 import { withAuth } from "../provider-auth";
@@ -20,6 +18,9 @@ import { classifyProviderHttpError, getSearchProviderEnvApiKey, withHardTimeout 
 const BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search";
 const DEFAULT_NUM_RESULTS = 10;
 const MAX_NUM_RESULTS = 20;
+const MAX_QUERY_CHARACTERS = 500;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_ERROR_BYTES = 8 * 1024;
 
 const RECENCY_MAP: Record<"day" | "week" | "month" | "year", "pd" | "pw" | "pm" | "py"> = {
 	day: "pd",
@@ -49,61 +50,118 @@ function braveFreshness(parsed: StructuredQuery, recency?: keyof typeof RECENCY_
 	return recency ? RECENCY_MAP[recency] : undefined;
 }
 
-export interface BraveSearchParams {
-	query: string;
+export interface BraveSearchParams extends SearchParams {
 	num_results?: number;
-	recency?: "day" | "week" | "month" | "year";
-	parsedQuery?: StructuredQuery;
-	signal?: AbortSignal;
-	fetch?: FetchImpl;
-}
-
-interface BraveSearchResult {
-	title?: string | null;
-	url?: string | null;
-	description?: string | null;
-	age?: string | null;
-	extra_snippets?: string[] | null;
+	/** Two-letter market code, or `ALL`. */
+	country?: string;
+	/** Brave search language code, such as `en` or `zh-hans`. */
+	search_lang?: string;
+	safesearch?: "off" | "moderate" | "strict";
 }
 
 interface BraveSearchResponse {
-	web?: {
-		results?: BraveSearchResult[];
-	};
+	web?: unknown;
 }
 
-function buildSnippet(result: BraveSearchResult): string | undefined {
-	const snippets: string[] = [];
+function normalizeText(value: unknown, maxLength: number): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const text = value
+		.replace(/<[^>]*>/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (!text) return undefined;
+	return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
+}
 
-	if (result.description?.trim()) {
-		snippets.push(result.description.trim());
+function normalizeUrl(value: unknown): string | undefined {
+	if (typeof value !== "string" || value.length > 2048) return undefined;
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+		return url.toString();
+	} catch {
+		return undefined;
+	}
+}
+
+function webResults(response: BraveSearchResponse): readonly unknown[] {
+	if (typeof response.web !== "object" || response.web === null || !("results" in response.web)) return [];
+	return Array.isArray(response.web.results) ? response.web.results : [];
+}
+
+async function readLimitedText(response: Response, maxBytes: number, truncate = false): Promise<string> {
+	if (!response.body) return "";
+	const reader = response.body.getReader();
+	let buffer = new Uint8Array(Math.min(maxBytes, 64 * 1024));
+	let bytes = 0;
+
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			const accepted = Math.min(value.byteLength, maxBytes - bytes);
+			const nextBytes = bytes + accepted;
+			if (nextBytes > buffer.byteLength) {
+				const grown = new Uint8Array(Math.min(maxBytes, Math.max(nextBytes, buffer.byteLength * 2)));
+				grown.set(buffer.subarray(0, bytes));
+				buffer = grown;
+			}
+			buffer.set(value.subarray(0, accepted), bytes);
+			bytes = nextBytes;
+			if (accepted < value.byteLength) {
+				await reader.cancel().catch(() => undefined);
+				if (!truncate) throw new SearchProviderError("brave", "Brave API response exceeded 2 MiB", 500);
+				break;
+			}
+		}
+	} finally {
+		reader.releaseLock();
 	}
 
-	if (Array.isArray(result.extra_snippets)) {
-		for (const snippet of result.extra_snippets) {
-			if (!snippet?.trim()) continue;
-			if (snippets.includes(snippet.trim())) continue;
-			snippets.push(snippet.trim());
+	return new TextDecoder().decode(buffer.subarray(0, bytes));
+}
+
+function buildSnippet(result: object): string | undefined {
+	const snippets = new Set<string>();
+	const description = normalizeText("description" in result ? result.description : undefined, 8_000);
+	if (description) snippets.add(description);
+
+	const extras = "extra_snippets" in result ? result.extra_snippets : undefined;
+	if (Array.isArray(extras)) {
+		for (const value of extras) {
+			const snippet = normalizeText(value, 8_000);
+			if (snippet) snippets.add(snippet);
 		}
 	}
 
-	return snippets.length > 0 ? snippets.join("\n") : undefined;
+	const combined = [...snippets].join("\n");
+	return combined ? (combined.length <= 8_000 ? combined : `${combined.slice(0, 7_999)}…`) : undefined;
 }
 
 async function callBraveSearch(
 	apiKey: string,
 	params: BraveSearchParams,
 ): Promise<{ response: BraveSearchResponse; requestId?: string }> {
-	const numResults = clampNumResults(params.num_results, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS);
+	const numResults = Math.floor(clampNumResults(params.num_results, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS));
 	const parsed = params.parsedQuery ?? parseSearchQuery(params.query);
+	const query = parsed.hasDirectives ? formatQuery(parsed, BRAVE_QUERY_SYNTAX) : params.query;
+	if (query.length > MAX_QUERY_CHARACTERS) {
+		throw new SearchProviderError(
+			"brave",
+			`Brave search queries cannot exceed ${MAX_QUERY_CHARACTERS} characters`,
+			400,
+		);
+	}
 	const url = new URL(BRAVE_SEARCH_URL);
-	url.searchParams.set("q", parsed.hasDirectives ? formatQuery(parsed, BRAVE_QUERY_SYNTAX) : params.query);
+	url.searchParams.set("q", query);
 	url.searchParams.set("count", String(numResults));
 	url.searchParams.set("extra_snippets", "true");
+	url.searchParams.set("text_decorations", "false");
+	url.searchParams.set("safesearch", params.safesearch ?? "moderate");
+	if (params.country) url.searchParams.set("country", params.country.toUpperCase());
+	if (params.search_lang) url.searchParams.set("search_lang", params.search_lang);
 	const freshness = braveFreshness(parsed, params.recency);
-	if (freshness) {
-		url.searchParams.set("freshness", freshness);
-	}
+	if (freshness) url.searchParams.set("freshness", freshness);
 
 	const fetchImpl = params.fetch ?? fetch;
 	const response = await fetchImpl(url, {
@@ -111,36 +169,50 @@ async function callBraveSearch(
 			Accept: "application/json",
 			"X-Subscription-Token": apiKey,
 		},
-		signal: withHardTimeout(params.signal),
+		signal: withHardTimeout(params.signal, params.timeoutMs),
 	});
 
 	if (!response.ok) {
-		const errorText = await response.text();
+		const errorText = await readLimitedText(response, MAX_ERROR_BYTES, true);
 		const classified = classifyProviderHttpError("brave", response.status, errorText);
 		if (classified) throw classified;
 		throw new SearchProviderError("brave", `Brave API error (${response.status}): ${errorText}`, response.status);
 	}
 
-	const data = (await response.json()) as BraveSearchResponse;
+	const raw = await readLimitedText(response, MAX_RESPONSE_BYTES);
+	let data: BraveSearchResponse;
+	try {
+		data = JSON.parse(raw) as BraveSearchResponse;
+	} catch {
+		throw new SearchProviderError("brave", "Brave API returned invalid JSON", 500);
+	}
 	const requestId = response.headers.get("x-request-id") ?? response.headers.get("request-id") ?? undefined;
 	return { response: data, requestId };
 }
 
-function mapBraveResponse(
-	result: { response: BraveSearchResponse; requestId?: string },
-	numResults: number,
-): SearchResponse {
-	const { response, requestId } = result;
+/** Execute Brave web search. */
+export async function searchBrave(params: BraveSearchParams): Promise<SearchResponse> {
+	const numResults = Math.floor(clampNumResults(params.num_results, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS));
+	const keyOrResolver = params.authStorage.resolver("brave", {
+		sessionId: params.sessionId,
+	});
+	const { response, requestId } = await withAuth(keyOrResolver, key => callBraveSearch(key, params), {
+		signal: params.signal,
+		missingKeyMessage: 'Brave credentials not found. Set BRAVE_API_KEY or configure an API key for provider "brave".',
+	});
 	const sources: SearchSource[] = [];
 
-	for (const item of response.web?.results ?? []) {
-		if (!item.url) continue;
+	for (const result of webResults(response)) {
+		if (typeof result !== "object" || result === null) continue;
+		const url = normalizeUrl("url" in result ? result.url : undefined);
+		if (!url) continue;
+		const publishedDate = normalizeText("age" in result ? result.age : undefined, 100);
 		sources.push({
-			title: item.title ?? item.url,
-			url: item.url,
-			snippet: buildSnippet(item),
-			publishedDate: item.age ?? undefined,
-			ageSeconds: dateToAgeSeconds(item.age),
+			title: normalizeText("title" in result ? result.title : undefined, 300) ?? url,
+			url,
+			snippet: buildSnippet(result),
+			publishedDate,
+			ageSeconds: dateToAgeSeconds(publishedDate),
 		});
 	}
 
@@ -148,30 +220,8 @@ function mapBraveResponse(
 		provider: "brave",
 		sources: sources.slice(0, numResults),
 		requestId,
+		authMode: "api_key",
 	};
-}
-
-/** Execute Brave web search through the caller's AuthStorage. */
-export async function searchBrave(params: SearchParams): Promise<SearchResponse> {
-	const numResults = clampNumResults(params.numSearchResults ?? params.limit, DEFAULT_NUM_RESULTS, MAX_NUM_RESULTS);
-	const resolver = params.authStorage.resolver("brave", { sessionId: params.sessionId });
-	const result = await withAuth(
-		resolver,
-		key =>
-			callBraveSearch(key, {
-				query: params.query,
-				num_results: params.numSearchResults ?? params.limit,
-				recency: params.recency,
-				parsedQuery: params.parsedQuery,
-				signal: params.signal,
-				fetch: params.fetch,
-			}),
-		{
-			signal: params.signal,
-			missingKeyMessage: "Brave credentials not found.",
-		},
-	);
-	return mapBraveResponse(result, numResults);
 }
 
 /** Search provider for Brave web search. */
@@ -184,6 +234,9 @@ export class BraveProvider extends SearchProvider {
 	}
 
 	search(params: SearchParams): Promise<SearchResponse> {
-		return searchBrave(params);
+		return searchBrave({
+			...params,
+			num_results: params.numSearchResults ?? params.limit,
+		});
 	}
 }

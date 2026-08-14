@@ -22,6 +22,9 @@ import { SearchProvider } from "./base";
 import { classifyProviderHttpError, getSearchProviderEnvApiKey, withHardTimeout } from "./utils";
 
 const EXA_API_URL = "https://api.exa.ai/search";
+const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
+const EXA_MCP_SOURCE = "oh-my-pi";
+const MAX_EXA_SNIPPET_CHARS = 500;
 const DEFAULT_EXA_SEARCH_DELAY_MS = getDefault("exa.searchDelayMs");
 
 let nextExaSearchRequestAt = 0;
@@ -118,6 +121,7 @@ export interface ExaSearchParams {
 	start_published_date?: string;
 	end_published_date?: string;
 	signal?: AbortSignal;
+	timeoutMs?: number;
 	fetch?: FetchImpl;
 	/**
 	 * Credential source. Resolved before falling back to `EXA_API_KEY` so
@@ -318,7 +322,7 @@ async function callExaSearch(apiKey: string, params: ExaSearchParams): Promise<E
 			"x-api-key": apiKey,
 		},
 		body: JSON.stringify(body),
-		signal: withHardTimeout(params.signal),
+		signal: withHardTimeout(params.signal, params.timeoutMs),
 	});
 
 	if (!response.ok) {
@@ -331,13 +335,20 @@ async function callExaSearch(apiKey: string, params: ExaSearchParams): Promise<E
 	return response.json() as Promise<ExaSearchResponse>;
 }
 function buildExaMcpArgs(params: ExaSearchParams): Record<string, unknown> {
-	const args: Record<string, unknown> = { query: params.query };
-	if (params.num_results !== undefined) args.num_results = params.num_results;
-	if (params.type !== undefined) args.type = params.type;
-	if (params.include_domains !== undefined) args.include_domains = params.include_domains;
-	if (params.exclude_domains !== undefined) args.exclude_domains = params.exclude_domains;
-	if (params.start_published_date !== undefined) args.start_published_date = params.start_published_date;
-	if (params.end_published_date !== undefined) args.end_published_date = params.end_published_date;
+	const queryParts = [params.query];
+	for (const domain of params.include_domains ?? []) {
+		const trimmed = domain.trim();
+		if (trimmed) queryParts.push(`site:${trimmed}`);
+	}
+	for (const domain of params.exclude_domains ?? []) {
+		const trimmed = domain.trim();
+		if (trimmed) queryParts.push(`-site:${trimmed}`);
+	}
+	if (params.start_published_date) queryParts.push(`after:${params.start_published_date}`);
+	if (params.end_published_date) queryParts.push(`before:${params.end_published_date}`);
+
+	const args: Record<string, unknown> = { query: queryParts.join(" ") };
+	if (params.num_results !== undefined) args.numResults = params.num_results;
 	return args;
 }
 
@@ -348,11 +359,12 @@ async function callExaMcpSearch(params: ExaSearchParams): Promise<ExaSearchRespo
 	query.set("tools", "web_search_exa");
 	const fetchImpl = params.fetch ?? fetch;
 	await waitForExaSearchSlot(params.signal);
-	const response = await fetchImpl(`https://mcp.exa.ai/mcp?${query.toString()}`, {
+	const response = await fetchImpl(`${EXA_MCP_URL}?${query.toString()}`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
 			Accept: "application/json, text/event-stream",
+			"x-exa-source": EXA_MCP_SOURCE,
 		},
 		body: JSON.stringify({
 			jsonrpc: "2.0",
@@ -363,14 +375,29 @@ async function callExaMcpSearch(params: ExaSearchParams): Promise<ExaSearchRespo
 				arguments: buildExaMcpArgs(params),
 			},
 		}),
-		signal: withHardTimeout(params.signal),
+		signal: withHardTimeout(params.signal, params.timeoutMs),
 	});
 	if (!response.ok) {
-		throw new Error(`MCP request failed: ${response.status} ${response.statusText}`);
+		const errorText = await response.text();
+		const classified = classifyProviderHttpError("exa", response.status, errorText);
+		if (classified) throw classified;
+		if (response.status === 429) {
+			throw new SearchProviderError(
+				"exa",
+				"exa: MCP rate limit reached (429); configure an Exa API key for higher limits",
+				response.status,
+			);
+		}
+		throw new SearchProviderError(
+			"exa",
+			`Exa MCP request failed (${response.status}): ${errorText}`,
+			response.status,
+		);
 	}
 	const mcpResponse = parseSSE(await response.text()) as {
 		result?: {
 			content?: Array<{ type: string; text?: string }>;
+			isError?: boolean;
 		};
 		error?: {
 			code: number;
@@ -382,6 +409,12 @@ async function callExaMcpSearch(params: ExaSearchParams): Promise<ExaSearchRespo
 	}
 	if (mcpResponse.error) {
 		throw new Error(`MCP error: ${mcpResponse.error.message}`);
+	}
+	if (mcpResponse.result?.isError) {
+		const message = mcpResponse.result.content
+			?.find(item => item.type === "text" && typeof item.text === "string")
+			?.text?.trim();
+		throw new SearchProviderError("exa", message || "Exa MCP returned an error");
 	}
 	const responsePayload = normalizeExaMcpPayload(mcpResponse.result);
 	if (isSearchResponse(responsePayload)) {
@@ -421,7 +454,10 @@ export async function searchExa(params: ExaSearchParams): Promise<SearchResponse
 			sources.push({
 				title: result.title ?? result.url,
 				url: result.url,
-				snippet: result.summary || result.text || result.highlights?.join(" ") || undefined,
+				snippet: (result.summary || result.text || result.highlights?.join(" ") || undefined)?.slice(
+					0,
+					MAX_EXA_SNIPPET_CHARS,
+				),
 				publishedDate: result.publishedDate ?? undefined,
 				ageSeconds: dateToAgeSeconds(result.publishedDate ?? undefined),
 				author: result.author ?? undefined,
@@ -460,13 +496,13 @@ export class ExaProvider extends SearchProvider {
 	 * still uses {@link isAvailable} so an unrelated configured provider
 	 * keeps priority over the public fallback.
 	 */
-	isExplicitlyAvailable(_authStorage: AuthStorage): boolean {
+	override isExplicitlyAvailable(_authStorage: AuthStorage): boolean {
 		return this.#settingsAllowSearch();
 	}
 
 	#settingsAllowSearch(): boolean {
 		try {
-			if (settings.get("exa.enabled") === false || settings.get("exa.enableSearch") === false) {
+			if (settings.get("exa.enabled") === false) {
 				return false;
 			}
 		} catch {
@@ -481,6 +517,7 @@ export class ExaProvider extends SearchProvider {
 			...directiveParams(parsed),
 			num_results: params.numSearchResults ?? params.limit,
 			signal: params.signal,
+			timeoutMs: params.timeoutMs,
 			authStorage: params.authStorage,
 			sessionId: params.sessionId,
 			fetch: params.fetch,
