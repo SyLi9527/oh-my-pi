@@ -15,6 +15,10 @@ saveTextLockfile = true
 [test]
 # bun test does NOT honor .gitignore; prune robomp's repo clones and
 # scratch dirs so a root-level `bun test` doesn't walk into them.
+# The preload registers the policy-module shim and sets a PERMISSIVE
+# empty-policy env so legacy tests that read context via fs.readFile keep
+# working; the security test files override that default explicitly.
+preload = ["./packages/coding-agent/test/policy-test-harness.ts"]
 pathIgnorePatterns = [
   "**/node_modules/**",
   "**/.git/**",
