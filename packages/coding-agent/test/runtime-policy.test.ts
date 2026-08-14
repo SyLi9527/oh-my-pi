@@ -131,7 +131,7 @@ describe("enforced policy", () => {
 		expect(policy.enforced).toBe(true);
 		expect(policy.generation).toBe(7);
 		expect(policy.workspaceRoot).toBe(root);
-		expect(policy.digest).toBe(process.env[RB_RUNTIME_POLICY_DIGEST]);
+		expect(policy.digest).toBe(process.env[RB_RUNTIME_POLICY_DIGEST] as string);
 		expect(isContextReadAllowed(policy, okPath)).toBe(true);
 		expect(isContextReadAllowed(policy, secretPath)).toBe(false);
 		// 三方一致性: the injected digest equals the recompute over the snapshot.

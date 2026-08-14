@@ -31,18 +31,19 @@ import { expandTilde } from "../tools/path-utils";
 // policy primitive; no canonicalization is duplicated here.
 let policyModulesPromise: Promise<{ limits: PolicyLimits; digest: DigestProtectedPaths } | null> | null = null;
 function getPolicyModules(): Promise<{ limits: PolicyLimits; digest: DigestProtectedPaths } | null> {
-	if (!policyModulesPromise) {
-		policyModulesPromise = (async () => {
-			try {
-				const limitsMod = await import("./omp-policy-limits.generated");
-				const digestMod = await import("./omp-policy-digest.generated");
-				return { limits: limitsMod.OMP_POLICY_LIMITS, digest: digestMod.ompDigestProtectedPaths };
-			} catch {
-				return null;
-			}
-		})();
-	}
-	return policyModulesPromise;
+	const existing = policyModulesPromise;
+	if (existing !== null) return existing;
+	const created = (async () => {
+		try {
+			const limitsMod = await import("./omp-policy-limits.generated");
+			const digestMod = await import("./omp-policy-digest.generated");
+			return { limits: limitsMod.OMP_POLICY_LIMITS, digest: digestMod.ompDigestProtectedPaths };
+		} catch {
+			return null;
+		}
+	})();
+	policyModulesPromise = created;
+	return created;
 }
 
 async function isProtectedDir(realDir: string): Promise<boolean> {

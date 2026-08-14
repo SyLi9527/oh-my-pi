@@ -107,7 +107,7 @@ Loaded via symbolic link.
 		expect(session.skills.some((s: Skill) => s.name === "test-skill")).toBe(true);
 	});
 
-	it("should discover skills when skill directory is a symlink", async () => {
+	it("should not discover skills through a symlinked skill directory (scanner-level denoise)", async () => {
 		const { session } = await createAgentSession({
 			cwd: tempDir,
 			agentDir: tempDir,
@@ -116,7 +116,11 @@ Loaded via symbolic link.
 			settings: createIsolatedSkillsSettings(),
 		});
 
-		expect(session.skills.some((s: Skill) => s.name === "symlinked-skill")).toBe(true);
+		// Positive control: a normal (non-symlink) skill subdir is still discovered.
+		expect(session.skills.some((s: Skill) => s.name === "test-skill")).toBe(true);
+		// New posture (Task 29 R29-2b): a symlinked skill subdir is skipped — the
+		// scanner never follows it into the target directory.
+		expect(session.skills.some((s: Skill) => s.name === "symlinked-skill")).toBe(false);
 	});
 
 	it("should still discover project skills when user skills directory is missing", async () => {
