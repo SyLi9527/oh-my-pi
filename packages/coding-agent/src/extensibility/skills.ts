@@ -12,10 +12,47 @@ import type { SourceMeta } from "../capability/types";
 import type { SkillsSettings } from "../config/settings";
 import { type Skill as CapabilitySkill, loadCapability } from "../discovery";
 import { compareSkillOrder, scanSkillsFromDir } from "../discovery/helpers";
+import {
+	isContextReadAllowedAsync,
+	parseRuntimePolicy,
+	type DigestProtectedPaths,
+	type PolicyLimits,
+} from "../policy/runtime-policy";
 import autoloadTemplate from "../prompts/skills/autoload.md" with { type: "text" };
 import userInvocationTemplate from "../prompts/skills/user-invocation.md" with { type: "text" };
 import type { SkillPromptDetails } from "../session/messages";
 import { expandTilde } from "../tools/path-utils";
+
+// Assembly-time policy guard for custom skill directories (Task 29). Mirrors
+// capability/fs.ts's generated-module resolution (same virtual-module
+// specifiers, same fail-closed semantics): missing modules → no assembly-time
+// deny — readFile remains the fail-closed backstop. The check realpath-resolves
+// the target and compares against the protected-path snapshot via the shared
+// policy primitive; no canonicalization is duplicated here.
+let policyModulesPromise: Promise<{ limits: PolicyLimits; digest: DigestProtectedPaths } | null> | null = null;
+function getPolicyModules(): Promise<{ limits: PolicyLimits; digest: DigestProtectedPaths } | null> {
+	if (!policyModulesPromise) {
+		policyModulesPromise = (async () => {
+			try {
+				const limitsMod = await import("./omp-policy-limits.generated");
+				const digestMod = await import("./omp-policy-digest.generated");
+				return { limits: limitsMod.OMP_POLICY_LIMITS, digest: digestMod.ompDigestProtectedPaths };
+			} catch {
+				return null;
+			}
+		})();
+	}
+	return policyModulesPromise;
+}
+
+async function isProtectedDir(realDir: string): Promise<boolean> {
+	const mods = await getPolicyModules();
+	if (mods === null) return false;
+	const policy = parseRuntimePolicy(process.env, mods.limits, mods.digest);
+	if (!policy.enforced) return false; // fail-closed deny-all is readFile's domain
+	return !(await isContextReadAllowedAsync(policy, realDir));
+}
+
 export interface Skill {
 	name: string;
 	description: string;
@@ -250,6 +287,27 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 	const customDirectoryResults = await Promise.all(
 		customDirectories.map(async dir => {
 			const expandedDir = expandTilde(dir);
+			// Assembly-time realpath deny (spec §4.2 scanner layer): a custom
+			// directory whose realpath resolves inside a protected path is
+			// excluded entirely — never scanned, never metadata-read. The entries
+			// ARE discovery parent roots (skills live in their subdirectories —
+			// R29-1), so this guard runs on the parent before it is scanned. The
+			// final read decision stays with readFile's realpath-aware deny (Task 28).
+			let realDir: string;
+			try {
+				realDir = await fs.realpath(expandedDir);
+			} catch {
+				realDir = expandedDir;
+			}
+			if (await isProtectedDir(realDir)) {
+				return {
+					expandedDir,
+					scanResult: {
+						items: [],
+						warnings: [`custom directory skipped: realpath resolves inside a protected path`],
+					},
+				};
+			}
 			const scanResult = await scanSkillsFromDir(
 				{ cwd, home: os.homedir(), repoRoot: null },
 				{

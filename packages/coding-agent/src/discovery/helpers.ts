@@ -360,6 +360,23 @@ export async function scanSkillsFromDir(
 	const warnings: string[] = [];
 	const { dir, level, providerId, requireDescription = false } = options;
 
+	// Scanner denoise: reject a symlinked discovery root outright. A symlink
+	// root pointing into a protected area must not be enumerated or
+	// metadata-read here — the final read decision stays with readFile's
+	// realpath-aware deny (Task 28).
+	let rootStat: fs.Stats;
+	try {
+		rootStat = await fs.promises.lstat(dir);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+			warnings.push(`Failed to stat skills directory: ${dir} (${String(error)})`);
+		}
+		return { items, warnings };
+	}
+	if (rootStat.isSymbolicLink()) {
+		return { items, warnings };
+	}
+
 	let entries: fs.Dirent[];
 	try {
 		entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -405,7 +422,10 @@ export async function scanSkillsFromDir(
 	}
 	for (const entry of entries) {
 		if (entry.name.startsWith(".")) continue;
-		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+		// Scanner denoise: only real subdirectories are skill candidates. A
+		// symlinked subdir pointing into a protected area must not be enumerated
+		// or metadata-read here; the final read decision stays with readFile.
+		if (!entry.isDirectory()) continue;
 		const skillPath = path.join(dir, entry.name, "SKILL.md");
 		if (fs.existsSync(skillPath)) {
 			work.push(loadSkill(skillPath));
@@ -483,6 +503,18 @@ export async function loadFilesFromDir<T>(
 		pattern = recursive ? "**/*" : "*";
 	}
 
+	// Scanner denoise: reject a symlinked discovery root outright — a symlink
+	// root pointing into a protected area must not be globbed or metadata-read.
+	// The final read decision stays with readFile (Task 28).
+	try {
+		const rootStat = await fs.promises.lstat(dir);
+		if (rootStat.isSymbolicLink()) {
+			return { items, warnings };
+		}
+	} catch {
+		// Missing/unreadable dir: fall through to the glob (returns empty).
+	}
+
 	// Use native glob for fast scanning with gitignore support
 	let matches: Array<{ path: string }>;
 	try {
@@ -499,16 +531,26 @@ export async function loadFilesFromDir<T>(
 		return { items, warnings };
 	}
 
-	// Read all matching files in parallel
+	// Read all matching files in parallel. The native glob's File filter resolves
+	// a symlink's target type, so a symlinked file into a protected area would
+	// otherwise match and be read here — lstat each match and skip symlinks.
 	const fileResults = await Promise.all(
 		matches.map(async match => {
 			const filePath = path.join(dir, match.path);
+			try {
+				const st = await fs.promises.lstat(filePath);
+				if (st.isSymbolicLink()) return null;
+			} catch {
+				return null; // raced away / unreadable — skip silently
+			}
 			const content = await readFile(filePath);
 			return { filePath, content };
 		}),
 	);
 
-	for (const { filePath, content } of fileResults) {
+	for (const result of fileResults) {
+		if (result === null) continue;
+		const { filePath, content } = result;
 		if (content === null) {
 			warnings.push(`Failed to read file: ${filePath}`);
 			continue;
