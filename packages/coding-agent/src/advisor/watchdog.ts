@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
-import { getAgentDir, isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
+import { getAgentDir, logger, prompt } from "@oh-my-pi/pi-utils";
+import { readFile } from "../capability/fs";
 import { expandAtImports } from "../discovery/at-imports";
 import activeRepoWatchdogTemplate from "../prompts/advisor/active-repo-watchdog.md" with { type: "text" };
 import contextFilesTemplate from "../prompts/advisor/context-files.md" with { type: "text" };
@@ -91,22 +92,21 @@ export async function collectConfigCandidates(
 
 	const items: ConfigCandidate[] = [];
 	for (const candidate of candidates) {
-		try {
-			const content = await Bun.file(candidate).text();
-			const parent = path.dirname(candidate);
-			const baseName = parent.split(path.sep).pop() ?? "";
-			const isUser = userPaths.has(candidate);
-			const ownerDir = baseName === ".omp" ? path.dirname(parent) : parent;
-			const ownerBaseName = ownerDir.split(path.sep).pop() ?? "";
-			if (isUser || !ownerBaseName.startsWith(".") || baseName === ".omp") {
-				const relative = path.relative(cwd, ownerDir);
-				const depth = relative === "" ? 0 : relative.split(path.sep).filter(Boolean).length;
-				items.push({ path: candidate, content, level: isUser ? "user" : "project", depth });
-			}
-		} catch (err) {
-			if (!isEnoent(err)) {
-				logger.warn("Failed to read config candidate", { path: candidate, error: String(err) });
-			}
+		// Converge onto fs.readFile so the protected-path deny applies to
+		// WATCHDOG (and advisor config) candidates too (spec §4.2①). A deny (or
+		// any missing/unreadable file) returns null → skip the candidate; never
+		// parse null, never include it in the results.
+		const content = await readFile(candidate);
+		if (content === null) continue;
+		const parent = path.dirname(candidate);
+		const baseName = parent.split(path.sep).pop() ?? "";
+		const isUser = userPaths.has(candidate);
+		const ownerDir = baseName === ".omp" ? path.dirname(parent) : parent;
+		const ownerBaseName = ownerDir.split(path.sep).pop() ?? "";
+		if (isUser || !ownerBaseName.startsWith(".") || baseName === ".omp") {
+			const relative = path.relative(cwd, ownerDir);
+			const depth = relative === "" ? 0 : relative.split(path.sep).filter(Boolean).length;
+			items.push({ path: candidate, content, level: isUser ? "user" : "project", depth });
 		}
 	}
 

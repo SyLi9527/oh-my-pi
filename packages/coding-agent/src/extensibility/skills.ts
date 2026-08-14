@@ -6,6 +6,7 @@ import {
 	MANAGED_SKILLS_PROVIDER_ID,
 	sanitizeManagedDescription,
 } from "../autolearn/managed-skills";
+import { readFile } from "../capability/fs";
 import { skillCapability } from "../capability/skill";
 import type { SourceMeta } from "../capability/types";
 import type { SkillsSettings } from "../config/settings";
@@ -473,7 +474,15 @@ export async function buildSkillPromptMessage(
 	args: string,
 	invocation: SkillInvocationKind = "user",
 ): Promise<BuiltSkillPromptMessage> {
-	const content = await Bun.file(skill.filePath).text();
+	// Converge the execution-time second read onto fs.readFile so the
+	// protected-path deny applies to `/skill:*` (spec §4.2①). On deny (null),
+	// throw a SAFE error that carries NO path content — callers such as
+	// `rpc-mode.ts` must not inject the denied target into the model context
+	// and must not call `promptCustomMessage`.
+	const content = await readFile(skill.filePath);
+	if (content === null) {
+		throw new Error("skill content is unavailable (read denied or failed)");
+	}
 	const body = content.replace(/^---\n[\s\S]*?\n---\n/, "").trim();
 	const trimmedArgs = args.trim();
 	let message: string;

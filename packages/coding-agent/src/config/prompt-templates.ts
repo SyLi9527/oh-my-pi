@@ -8,6 +8,7 @@ import {
 	parseFrontmatter,
 	prompt,
 } from "@oh-my-pi/pi-utils";
+import { readFile } from "../capability/fs";
 import { jtdToTypeScript } from "../tools/jtd-to-typescript";
 import { parseCommandArgs, substituteArgs } from "../utils/command-args";
 
@@ -92,50 +93,51 @@ async function loadTemplatesFromDir(
 
 		for (const entry of entries) {
 			const fullPath = path.join(dir, entry);
-			const file = Bun.file(fullPath);
+			if (!entry.endsWith(".md")) continue;
+
+			// Converge the content read onto fs.readFile so the protected-path
+			// deny applies to `.omp/prompts` templates too (spec §4.2①). A deny
+			// (or any unreadable file) returns null → skip the candidate; never
+			// parse null, never include it in the results.
+			const rawContent = await readFile(fullPath);
+			if (rawContent === null) continue;
 
 			try {
-				const stat = await file.exists();
-				if (!stat) continue;
+				const { frontmatter, body } = parseFrontmatter(rawContent, { source: fullPath });
 
-				if (entry.endsWith(".md")) {
-					const rawContent = await file.text();
-					const { frontmatter, body } = parseFrontmatter(rawContent, { source: fullPath });
+				const name = entry.split("/").pop()!.slice(0, -3); // Remove .md extension
 
-					const name = entry.split("/").pop()!.slice(0, -3); // Remove .md extension
+				// Build source string based on subdirectory structure
+				const entryDir = entry.includes("/") ? entry.split("/").slice(0, -1).join(":") : "";
+				const fullSubdir = subdir && entryDir ? `${subdir}:${entryDir}` : entryDir || subdir;
 
-					// Build source string based on subdirectory structure
-					const entryDir = entry.includes("/") ? entry.split("/").slice(0, -1).join(":") : "";
-					const fullSubdir = subdir && entryDir ? `${subdir}:${entryDir}` : entryDir || subdir;
-
-					let sourceStr: string;
-					if (source === "user") {
-						sourceStr = fullSubdir ? `(user:${fullSubdir})` : "(user)";
-					} else {
-						sourceStr = fullSubdir ? `(project:${fullSubdir})` : "(project)";
-					}
-
-					// Get description from frontmatter or first non-empty line
-					let description = String(frontmatter.description || "");
-					if (!description) {
-						const firstLine = body.split("\n").find(line => line.trim());
-						if (firstLine) {
-							// Truncate if too long
-							description = firstLine.slice(0, 60);
-							if (firstLine.length > 60) description += "...";
-						}
-					}
-
-					// Append source to description
-					description = description ? `${description} ${sourceStr}` : sourceStr;
-
-					templates.push({
-						name,
-						description,
-						content: body,
-						source: sourceStr,
-					});
+				let sourceStr: string;
+				if (source === "user") {
+					sourceStr = fullSubdir ? `(user:${fullSubdir})` : "(user)";
+				} else {
+					sourceStr = fullSubdir ? `(project:${fullSubdir})` : "(project)";
 				}
+
+				// Get description from frontmatter or first non-empty line
+				let description = String(frontmatter.description || "");
+				if (!description) {
+					const firstLine = body.split("\n").find(line => line.trim());
+					if (firstLine) {
+						// Truncate if too long
+						description = firstLine.slice(0, 60);
+						if (firstLine.length > 60) description += "...";
+					}
+				}
+
+				// Append source to description
+				description = description ? `${description} ${sourceStr}` : sourceStr;
+
+				templates.push({
+					name,
+					description,
+					content: body,
+					source: sourceStr,
+				});
 			} catch (error) {
 				logger.warn("Failed to load prompt template", { path: fullPath, error: String(error) });
 			}
